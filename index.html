@@ -61,6 +61,15 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
 .rg-mes b{font-variant-numeric:tabular-nums}
 .rg-mes.late{border-color:rgba(240,105,125,.55);background:rgba(240,105,125,.08)}
 .rg-mes.late .tag{color:#f0697d;font-size:.7rem;font-weight:800;margin-left:.45rem}
+.rg-mes-top{display:flex;justify-content:space-between;align-items:center;width:100%;cursor:pointer}
+.rg-mes .seta{color:var(--ink-soft);font-size:.8rem}
+.rg-det{display:flex;flex-direction:column;gap:.25rem;margin:-.05rem 0 .15rem;padding:0 .35rem}
+.rg-det.hide{display:none}
+.rg-it{display:flex;justify-content:space-between;font-size:.8rem;color:var(--ink-soft);background:rgba(255,255,255,.025);border-radius:8px;padding:.4rem .6rem}
+.rg-it b{font-variant-numeric:tabular-nums;color:var(--ink)}
+.rg-it em{font-style:normal;font-size:.68rem;font-weight:700;margin-left:.3rem;opacity:.85}
+.rg-it.pg,.rg-it.pg b,.rg-it.pg em{color:#4cc47e}
+.rg-it.at,.rg-it.at b,.rg-it.at em{color:#f0697d}
 .pbar{height:10px;border-radius:99px;background:rgba(255,255,255,.13);border:1px solid var(--line);overflow:hidden;margin:.5rem 0 .8rem}
 .pbar>i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#2fb56b,#4cc47e);transition:width .4s}
 .pbar.late>i{background:linear-gradient(90deg,#d64560,#f0697d)}
@@ -880,24 +889,37 @@ function renderCliente(){
    let totalGeral=0;const porMes={};
    cs.forEach(cc=>{totalGeral+=cc.saldo||0;
      (cc.parcelas||[]).forEach(p=>{
-       if(p.falta<=0.005)return;
        const dt=parseDateBR(p.venc);if(!dt)return;
        const k=dt.getFullYear()*100+dt.getMonth();
-       if(!porMes[k])porMes[k]={ano:dt.getFullYear(),mes:dt.getMonth(),valor:0,late:false};
-       porMes[k].valor+=p.falta;
-       if(p.status==="vencida"||p.status==="parcial-vencida")porMes[k].late=true;
+       if(!porMes[k])porMes[k]={ano:dt.getFullYear(),mes:dt.getMonth(),valor:0,late:false,itens:[]};
+       const aberta=p.falta>0.005;
+       if(aberta)porMes[k].valor+=p.falta;
+       const atrasada=aberta&&(p.status==="vencida"||p.status==="parcial-vencida");
+       if(atrasada)porMes[k].late=true;
+       porMes[k].itens.push({venc:p.venc,conta:cc.nome,n:p.n,
+         valor:aberta?p.falta:p.valor,paga:!aberta,atrasada,parcial:p.status.startsWith("parcial")});
      });});
+   Object.values(porMes).forEach(m=>m.itens=m.itens.filter(i=>i.paga||i.valor>0.005));
+   const meses=Object.keys(porMes).filter(k=>porMes[k].valor>0.005||porMes[k].itens.some(i=>!i.paga)).length?porMes:porMes;
    el("rgTotal").textContent=fmtR$(totalGeral);
    el("rgSub").textContent=cs.length>1?("Soma das suas "+cs.length+" contas"):"";
-   const ks=Object.keys(porMes).sort((a,b)=>a-b);
+   const ks=Object.keys(porMes).filter(k=>porMes[k].valor>0.005).sort((a,b)=>a-b);
    const box=el("rgMeses");box.innerHTML="";
    if(!ks.length){el("rgMesesTit").style.display="none";
      box.innerHTML='<div class="rg-mes" style="justify-content:center">Nada em aberto — tudo quitado 🎉</div>';}
    else{el("rgMesesTit").style.display="";
      ks.forEach(k=>{const m=porMes[k];
        const d=document.createElement("div");d.className="rg-mes"+(m.late?" late":"");
-       d.innerHTML='<span>'+MESES[m.mes]+'/'+m.ano+(m.late?'<span class="tag">em atraso</span>':'')+'</span><b>'+fmtR$(m.valor)+'</b>';
-       box.appendChild(d);});}}
+       d.innerHTML='<div class="rg-mes-top"><span>'+MESES[m.mes]+'/'+m.ano+(m.late?'<span class="tag">em atraso</span>':'')+'</span><b>'+fmtR$(m.valor)+' <span class="seta">▾</span></b></div>';
+       const det=document.createElement("div");det.className="rg-det hide";
+       m.itens.sort((a,b)=>{const da=parseDateBR(a.venc),db=parseDateBR(b.venc);return (da&&db)?da-db:0;});
+       m.itens.forEach(it=>{
+         const cls=it.paga?"pg":(it.atrasada?"at":"");
+         const st=it.paga?"paga":(it.atrasada?"em atraso":(it.parcial?"falta":"a vencer"));
+         det.innerHTML+='<div class="rg-it '+cls+'"><span>'+it.venc.slice(0,5)+' · '+it.conta+' · P'+it.n+'</span><span><b>'+fmtR$(it.valor)+'</b> <em>'+st+'</em></span></div>';});
+       d.querySelector(".rg-mes-top").onclick=()=>{det.classList.toggle("hide");
+         d.querySelector(".seta").textContent=det.classList.contains("hide")?"▾":"▴";};
+       box.appendChild(d);box.appendChild(det);});}}
   el("kSaldo").textContent=fmtR$(c.saldo);
   el("kProx").textContent=c.proxData?(c.proxData.slice(0,5)+" · "+fmtR$(c.proxValor)):(c.saldo<=0.005?"Quitado 🎉":"—");
   const box=el("cliParcelas");box.innerHTML="";

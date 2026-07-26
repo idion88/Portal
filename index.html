@@ -52,6 +52,15 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
 .chip-bar{display:block;height:4px;border-radius:99px;background:rgba(255,255,255,.16);overflow:hidden}
 .chip-bar>i{display:block;height:100%;border-radius:99px;background:#4cc47e}
 .chip-bar.late>i{background:#f0697d}
+.rg-total{font-size:.98rem;margin:.5rem 0 .15rem}
+.rg-total b{font-size:1.15rem}
+.rg-sub{font-size:.76rem;color:var(--ink-soft);margin-bottom:.8rem}
+.rg-tit{font-size:.85rem;font-weight:700;margin-bottom:.45rem}
+.rg-meses{display:flex;flex-direction:column;gap:.3rem}
+.rg-mes{display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:10px;padding:.5rem .75rem;font-size:.88rem}
+.rg-mes b{font-variant-numeric:tabular-nums}
+.rg-mes.late{border-color:rgba(240,105,125,.55);background:rgba(240,105,125,.08)}
+.rg-mes.late .tag{color:#f0697d;font-size:.7rem;font-weight:800;margin-left:.45rem}
 .pbar{height:10px;border-radius:99px;background:rgba(255,255,255,.13);border:1px solid var(--line);overflow:hidden;margin:.5rem 0 .8rem}
 .pbar>i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#2fb56b,#4cc47e);transition:width .4s}
 .pbar.late>i{background:linear-gradient(90deg,#d64560,#f0697d)}
@@ -168,6 +177,13 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
       <div class="kpis">
         <div class="kpi"><div class="lb">Restante a pagar</div><div class="vl" id="kSaldo">—</div></div>
         <div class="kpi"><div class="lb">Próxima parcela</div><div class="vl" id="kProx">—</div></div>
+      </div>
+      <div class="card" id="cardResumo" style="margin-bottom:1rem">
+        <h3>Resumo geral</h3>
+        <div class="rg-total">Total da(s) dívida(s): <b id="rgTotal">—</b></div>
+        <div class="rg-sub" id="rgSub"></div>
+        <div class="rg-tit" id="rgMesesTit">O que vence em cada mês:</div>
+        <div class="rg-meses" id="rgMeses"></div>
       </div>
       <div class="card">
         <h3 id="cliTituloParcelas">Parcelas</h3>
@@ -859,6 +875,29 @@ function renderCliente(){
    el("cliBarraLb").innerHTML=quitado
      ?'<span><b>Conta quitada 🎉</b></span><span>100%</span>'
      :'<span>Pago: <b>'+fmtR$(pago)+'</b> de '+fmtR$(c.total)+'</span><span><b>'+pct+'%</b></span>';}
+  {const MESES=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+   const hoje=hojeMeiaNoite();
+   let totalGeral=0;const porMes={};
+   cs.forEach(cc=>{totalGeral+=cc.saldo||0;
+     (cc.parcelas||[]).forEach(p=>{
+       if(p.falta<=0.005)return;
+       const dt=parseDateBR(p.venc);if(!dt)return;
+       const k=dt.getFullYear()*100+dt.getMonth();
+       if(!porMes[k])porMes[k]={ano:dt.getFullYear(),mes:dt.getMonth(),valor:0,late:false};
+       porMes[k].valor+=p.falta;
+       if(p.status==="vencida"||p.status==="parcial-vencida")porMes[k].late=true;
+     });});
+   el("rgTotal").textContent=fmtR$(totalGeral);
+   el("rgSub").textContent=cs.length>1?("Soma das suas "+cs.length+" contas"):"";
+   const ks=Object.keys(porMes).sort((a,b)=>a-b);
+   const box=el("rgMeses");box.innerHTML="";
+   if(!ks.length){el("rgMesesTit").style.display="none";
+     box.innerHTML='<div class="rg-mes" style="justify-content:center">Nada em aberto — tudo quitado 🎉</div>';}
+   else{el("rgMesesTit").style.display="";
+     ks.forEach(k=>{const m=porMes[k];
+       const d=document.createElement("div");d.className="rg-mes"+(m.late?" late":"");
+       d.innerHTML='<span>'+MESES[m.mes]+'/'+m.ano+(m.late?'<span class="tag">em atraso</span>':'')+'</span><b>'+fmtR$(m.valor)+'</b>';
+       box.appendChild(d);});}}
   el("kSaldo").textContent=fmtR$(c.saldo);
   el("kProx").textContent=c.proxData?(c.proxData.slice(0,5)+" · "+fmtR$(c.proxValor)):(c.saldo<=0.005?"Quitado 🎉":"—");
   const box=el("cliParcelas");box.innerHTML="";

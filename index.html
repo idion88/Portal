@@ -2,28 +2,27 @@
 <html lang="pt-BR" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="icon" type="image/png" href="favicon.png?v=2">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="theme-color" content="#002d71">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="favicon.png?v=2">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>Nordeste Prime · Portal do Cliente</title>
-
-<!-- GOOGLE ADSENSE -->
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8067475548372084" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{
-  --ink:#e7eef6;--ink-soft:#93a7bd;--line:#26323f;--line-soft:#1d2731;
-  --paper:#141d27;--bg:#0c131b;--brand:#3b9be0;--brand-dk:#7cc1f0;
-  --debt:#f0697d;--paid:#4cc47e;--pending:#e0a44a;--chip:#1c2a38;
-  --surface-2:#1a242f;--input-bg:#0f1620;--modal-bg:#1a242f;
+  --ink:#eaf1fa;--ink-soft:#9db4d4;--line:#1e4074;--line-soft:#173561;
+  --paper:#0a2c5a;--bg:#041f44;--brand:#3b9be0;--brand-dk:#7cc1f0;
+  --debt:#f0697d;--paid:#4cc47e;--pending:#e0a44a;--chip:#0f3565;
+  --surface-2:#0d3161;--input-bg:#071f43;--modal-bg:#0d3161;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 12px 32px -16px rgba(0,0,0,.6);
 }
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--ink);font-family:"Inter","Segoe UI",Roboto,system-ui,sans-serif;
+body{background:linear-gradient(180deg,#002d71 0%,#041f44 45%,#03152f 100%) fixed;color:var(--ink);font-family:"Inter","Segoe UI",Roboto,system-ui,sans-serif;
   padding:clamp(.8rem,3vw,2rem) clamp(.6rem,3vw,1.5rem) 4rem;-webkit-font-smoothing:antialiased}
 .shell{max-width:860px;margin:0 auto;background:var(--paper);border-radius:20px;box-shadow:var(--shadow);overflow:hidden;min-height:60vh}
 header{padding:1.2rem 1.4rem 1rem;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:.8rem;align-items:center;justify-content:space-between}
 h1{font-size:1.25rem;font-weight:700;letter-spacing:-.02em;display:flex;align-items:center;gap:.5rem}
-.logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#3b9be0,#155e9c);display:grid;place-items:center;color:#fff;font-size:.85rem;font-weight:700}
+.logo{width:32px;height:32px;border-radius:9px;object-fit:cover;display:block}
 .sub{color:var(--ink-soft);font-size:.8rem;margin-top:.2rem}
 main{padding:1.2rem 1.4rem 2rem}
 .hide{display:none!important}
@@ -39,7 +38,7 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
 .err{color:var(--debt);font-size:.82rem;margin-top:.55rem;min-height:1rem;font-weight:600}
 .ok-msg{color:var(--paid);font-size:.82rem;margin-top:.55rem;min-height:1rem;font-weight:600}
 .login-card{max-width:380px;margin:2.5rem auto;text-align:center}
-.login-card .logo-lg{width:56px;height:56px;border-radius:15px;margin:0 auto 1rem;background:linear-gradient(135deg,#3b9be0,#155e9c);display:grid;place-items:center;color:#fff;font-size:1.3rem;font-weight:700}
+.login-card .logo-lg{width:72px;height:72px;border-radius:18px;margin:0 auto 1rem;object-fit:cover;display:block}
 .login-card h2{font-size:1.25rem;margin-bottom:.25rem}
 .login-card p{color:var(--ink-soft);font-size:.85rem;margin-bottom:1.2rem}
 .login-card input{margin-bottom:.7rem;text-align:center}
@@ -123,7 +122,7 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
 <div class="shell">
   <header>
     <div>
-      <h1><span class="logo">NP</span> Nordeste Prime</h1>
+      <h1><img class="logo" src="favicon.png" alt=""> Nordeste Prime</h1>
       <div class="sub" id="subtitle">Portal do cliente</div>
     </div>
     <div class="topbtns hide" id="topBtns">
@@ -135,7 +134,7 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
 
     <!-- LOGIN -->
     <div id="viewLogin" class="login-card">
-      <div class="logo-lg">NP</div>
+      <img class="logo-lg" src="apple-touch-icon.png" alt="Portal">
       <h2>Bem-vindo</h2>
       <p>Entre com o login e senha fornecidos pela loja.</p>
       <input id="inLogin" placeholder="Login" autocomplete="username">

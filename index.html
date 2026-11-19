@@ -116,6 +116,22 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
 .footer-note{text-align:center;color:var(--ink-soft);font-size:.72rem;margin-top:1.4rem}
 .topbtns{display:flex;gap:.5rem;flex-wrap:wrap}
 .sync-badge{font-size:.72rem;color:var(--ink-soft)}
+/* notificações */
+.bell{position:relative}
+.bell .cnt{position:absolute;top:-6px;right:-6px;background:var(--debt);color:#fff;border-radius:10px;font-size:.65rem;font-weight:800;padding:.05rem .4rem;min-width:1.1rem;text-align:center;line-height:1.3}
+.aviso{border:1px solid var(--pending);background:rgba(224,164,74,.08);border-radius:13px;padding:.85rem .95rem;margin-bottom:1rem;position:relative}
+.aviso.assoc{border-color:var(--brand);background:rgba(59,155,224,.08)}
+.aviso h4{font-size:.9rem;margin-bottom:.35rem;padding-right:2rem}
+.aviso .av-sub{font-size:.76rem;color:var(--ink-soft);margin-bottom:.4rem}
+.aviso .x{position:absolute;top:.45rem;right:.55rem;background:transparent;border:none;color:var(--ink-soft);font-size:1.15rem;cursor:pointer;padding:.2rem .4rem}
+.av-grp{font-size:.72rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;margin:.55rem 0 .15rem}
+.av-grp.hoje{color:var(--debt)}
+.av-grp.amanha{color:var(--pending)}
+.av-list{max-height:240px;overflow:auto}
+.av-it{display:flex;justify-content:space-between;gap:.6rem;align-items:center;font-size:.82rem;padding:.45rem 0;border-bottom:1px solid var(--line-soft)}
+.av-it:last-child{border-bottom:none}
+.av-it em{font-style:normal;color:var(--ink-soft);font-size:.74rem}
+.av-acts{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.7rem}
 </style>
 </head>
 <body>
@@ -126,11 +142,15 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
       <div class="sub" id="subtitle">Portal do cliente</div>
     </div>
     <div class="topbtns hide" id="topBtns">
+      <button class="btn btn-sm btn-ghost bell" id="btnNotif" title="Vencimentos de hoje e amanhã">🔔<span class="cnt hide" id="notifCnt"></span></button>
       <button class="btn btn-sm btn-ghost" id="btnRefresh">Atualizar</button>
       <button class="btn btn-sm btn-ghost" id="btnSair">Sair</button>
     </div>
   </header>
   <main>
+
+    <!-- NOTIFICAÇÕES DE VENCIMENTO (cliente e admin) -->
+    <div id="notifBox" class="hide"></div>
 
     <!-- LOGIN -->
     <div id="viewLogin" class="login-card">
@@ -150,6 +170,7 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
         <button data-tab="config">Configurações</button>
       </div>
       <div class="sync-badge" id="syncBadge" style="margin-bottom:.8rem"></div>
+      <div id="avisoAssoc" class="hide"></div>
 
       <div id="tabContas">
         <div style="display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap">
@@ -726,6 +747,7 @@ function mostrar(view){
   el(view).classList.remove("hide");
   el("topBtns").classList.toggle("hide",view==="viewLogin");
   el("btnRefresh").classList.toggle("hide",view!=="viewCliente");
+  if(view==="viewLogin"){el("notifBox").classList.add("hide");el("notifBox").innerHTML="";}
 }
 
 /* ---------- ADMIN ---------- */
@@ -733,17 +755,27 @@ let contasCache=[];
 async function abrirAdmin(){
   mostrar("viewAdmin");
   el("subtitle").textContent="Painel do administrador";
+  notifFechado=false;assocFechadoQtd=-1;   // novo login: mostra os avisos de novo
+  el("cfgZap").value=cfg.zap||"";el("cfgLink").value=cfg.link||"";
+  iniciarAutoSync("admin");
+  await sincronizarAdmin();
+}
+/* Sincroniza com a base do Gerente/Karvore e republica todas as contas.
+   Chamado ao entrar, no botão "Sincronizar agora" e a cada 3 horas. */
+async function sincronizarAdmin(){
+  ultimoSync=Date.now();
   el("syncBadge").textContent="Sincronizando com a base do Gerente…";
   try{
     await carregarFonte();
     const n=await publicarTudo();
-    el("syncBadge").textContent="Base carregada · "+fonte.base.length+" clientes · "+n+" conta(s) republicada(s) · "+new Date().toLocaleTimeString("pt-BR");
+    el("syncBadge").textContent="Base carregada · "+fonte.base.length+" clientes · "+n+" conta(s) republicada(s) · "+
+      new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+" · próxima sincronização automática às "+horaProximoSync();
   }catch(e){el("syncBadge").textContent="Falha ao sincronizar: "+e.message;}
-  el("cfgZap").value=cfg.zap||"";el("cfgLink").value=cfg.link||"";
   await renderContas();
 }
 async function renderContas(){
   try{contasCache=await listarContas();}catch(e){el("listaContas").innerHTML='<p class="err">'+e.message+'</p>';return;}
+  atualizarAvisosAdmin();
   if(!contasCache.length){el("listaContas").innerHTML='<p class="sub">Nenhuma conta criada ainda. Toque em “+ Nova conta”.</p>';return;}
   const mapBase={};if(fonte)fonte.base.forEach(b=>mapBase[b.key]=b);
   const q=(el("buscaContas").value||"").trim().toLowerCase();
@@ -770,7 +802,7 @@ async function renderContas(){
   el("listaContas").querySelectorAll("[data-ed]").forEach(b=>b.onclick=()=>abrirModalConta(b.dataset.ed));
   el("listaContas").querySelectorAll("[data-vw]").forEach(b=>b.onclick=()=>{
     const c=contasCache.find(x=>x.login===b.dataset.vw);
-    if(c&&c.payload){abrirCliente(c.login,c.payload);cli.preview=true;
+    if(c&&c.payload){abrirCliente(c.login,c.payload,true);
       el("subtitle").textContent="Visualizando como o cliente · "+c.login;}
   });
   el("listaContas").querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{
@@ -782,12 +814,12 @@ async function renderContas(){
 
 /* modal conta */
 let editandoLogin=null;
-function abrirModalConta(login){
+function abrirModalConta(login,preKeys,nomeSugerido){
   editandoLogin=login||null;
   el("mContaTitulo").textContent=login?("Editar conta: "+login):"Nova conta";
-  el("mLogin").value=login||"";el("mLogin").disabled=!!login;
+  el("mLogin").value=login||(nomeSugerido?sugerirLogin(nomeSugerido):"");el("mLogin").disabled=!!login;
   el("mSenha").value="";el("mErr").textContent="";el("mBusca").value="";
-  const sel=new Set(login?((contasCache.find(c=>c.login===login)||{}).payload||{}).keys||[]:[]);
+  const sel=new Set(login?((contasCache.find(c=>c.login===login)||{}).payload||{}).keys||[]:(preKeys||[]));
   renderPick(sel,"");
   el("mBusca").oninput=()=>renderPick(sel,el("mBusca").value);
   el("ovConta").classList.remove("hide");
@@ -869,14 +901,22 @@ async function salvarConta(sel){
 
 /* ---------- CLIENTE ---------- */
 let cli={login:"",extrato:null,idx:0};
-function abrirCliente(login,payload){
+function abrirCliente(login,payload,preview){
   mostrar("viewCliente");
   el("subtitle").textContent="Portal do cliente";
-  cli={login,extrato:payload.extrato||{clientes:[]},idx:0};
+  cli={login,extrato:payload.extrato||{clientes:[]},idx:0,preview:!!preview};
+  if(!preview)notifFechado=false;
   renderCliente();
+  atualizarAvisosCliente();
+  if(preview)return;                       // admin só visualizando: não liga timer do cliente
+  iniciarAutoSync("cliente");
+  // extrato com mais de 3 horas (ou nunca gerado): sincroniza já ao entrar
+  const at=cli.extrato&&cli.extrato.atualizado?new Date(cli.extrato.atualizado).getTime():0;
+  if(!at||Date.now()-at>=SYNC_MS)sincronizarCliente();
 }
 function renderCliente(){
   const ex=cli.extrato;const cs=ex.clientes||[];
+  if(cli.idx>=cs.length)cli.idx=0;
   el("cliOla").textContent="Olá!";
   el("cliAtualizado").textContent=ex.atualizado?("Atualizado em "+new Date(ex.atualizado).toLocaleString("pt-BR")):"";
   const chips=el("cliChips");
@@ -990,6 +1030,201 @@ async function atualizarCliente(){
   }catch(e){}
 }
 
+/* =========================================================
+   SINCRONIZAÇÃO AUTOMÁTICA (a cada 3 horas)
+   Enquanto o portal estiver aberto, roda a cada 3h. Se o celular
+   ou a aba ficar parado e o timer atrasar, ao voltar para a tela
+   ele confere: passou de 3h desde a última, sincroniza na hora.
+   ========================================================= */
+const SYNC_MS=3*60*60*1000;
+let syncTimer=null,ultimoSync=0,modoSync=null;
+function iniciarAutoSync(modo){
+  pararAutoSync();modoSync=modo;ultimoSync=Date.now();
+  syncTimer=setInterval(rodarAutoSync,SYNC_MS);
+}
+function pararAutoSync(){if(syncTimer)clearInterval(syncTimer);syncTimer=null;modoSync=null;}
+async function rodarAutoSync(){
+  if(modoSync==="admin")await sincronizarAdmin();
+  else if(modoSync==="cliente")await sincronizarCliente();
+}
+function horaProximoSync(){return new Date(ultimoSync+SYNC_MS).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});}
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState==="visible"&&modoSync&&Date.now()-ultimoSync>=SYNC_MS)rodarAutoSync();
+});
+/* Cliente: recalcula o próprio extrato direto da base e grava na conta dele */
+async function sincronizarCliente(){
+  if(!cli.login||cli.preview)return;
+  ultimoSync=Date.now();
+  try{
+    await carregarFonte();
+    const row=await getConta(cli.login);
+    if(!row||!row.payload)return;
+    const p=row.payload;
+    p.extrato=montarExtrato(p.keys||[]);
+    await upsertConta(cli.login,p);
+    cli.extrato=p.extrato;
+  }catch(e){
+    console.warn("Sync do cliente falhou, usando o último extrato publicado:",e);
+    try{const row=await getConta(cli.login);if(row&&row.payload&&row.payload.extrato)cli.extrato=row.payload.extrato;}catch(_){}
+  }
+  renderCliente();
+  atualizarAvisosCliente();
+}
+
+/* =========================================================
+   NOTIFICAÇÕES DE VENCIMENTO
+   - Cliente: parcelas dele que vencem amanhã (24h antes) e hoje.
+   - Admin: as mesmas notificações de TODOS os clientes.
+   Aparecem dentro do portal (sino + caixa no topo) e, se o
+   aparelho permitir, também como notificação do sistema
+   (uma por dia para cada tipo: "vence hoje" / "vence amanhã").
+   ========================================================= */
+let avisosAtuais=[],avisosAdmin=false,notifFechado=false;
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));}
+function diasAte(ds){const dt=parseDateBR(ds);if(!dt)return null;return Math.round((dt-hojeMeiaNoite())/86400000);}
+function diaChave(){const d=hojeMeiaNoite();return d.getFullYear()+"-"+(d.getMonth()+1)+"-"+d.getDate();}
+/* itens: [{f:ficha, dono:"login(s)"}] -> avisos de hoje e amanhã */
+function coletarAvisos(itens){
+  const out=[];
+  itens.forEach(({f,dono})=>{
+    (f.parcelas||[]).forEach(p=>{
+      if(!(p.falta>0.005))return;
+      const d=diasAte(p.venc);
+      if(d===0||d===1)out.push({tipo:d===0?"hoje":"amanha",nome:f.nome,origem:f.origem||"np",dono:dono||"",n:p.n,venc:p.venc,valor:p.falta});
+    });
+  });
+  return out.sort((a,b)=>(a.tipo===b.tipo?a.nome.localeCompare(b.nome):(a.tipo==="hoje"?-1:1)));
+}
+function atualizarAvisosCliente(){
+  const cs=(cli.extrato&&cli.extrato.clientes)||[];
+  const lista=coletarAvisos(cs.map(f=>({f,dono:""})));
+  renderAvisos(lista,false);
+  if(!cli.preview)notificarSistema(lista,cli.login);
+}
+function atualizarAvisosAdmin(){
+  if(!fonte){renderAvisoAssoc();return;}
+  const donos={};
+  contasCache.forEach(c=>((c.payload||{}).keys||[]).forEach(k=>{(donos[k]=donos[k]||[]).push(c.login);}));
+  const itens=[];
+  fonte.base.forEach(b=>{let f;try{f=fichaDe(b);}catch(e){return;}
+    if(f.saldo>0.005)itens.push({f,dono:(donos[b.key]||[]).join(", ")});});
+  const lista=coletarAvisos(itens);
+  renderAvisos(lista,true);
+  notificarSistema(lista,"admin");
+  renderAvisoAssoc();
+}
+function renderAvisos(lista,admin){
+  avisosAtuais=lista;avisosAdmin=admin;
+  const cnt=el("notifCnt");cnt.textContent=lista.length;cnt.classList.toggle("hide",!lista.length);
+  const box=el("notifBox");
+  if(!lista.length||notifFechado){box.classList.add("hide");box.innerHTML="";return;}
+  montarCaixaAvisos();
+}
+function montarCaixaAvisos(){
+  const lista=avisosAtuais,admin=avisosAdmin,box=el("notifBox");
+  const hoje=lista.filter(a=>a.tipo==="hoje"),amanha=lista.filter(a=>a.tipo==="amanha");
+  let h='<div class="aviso"><button class="x" id="notifX" title="Fechar">✕</button>';
+  h+='<h4>🔔 '+(admin?"Vencimentos de todos os clientes":"Lembrete de vencimento")+'</h4>';
+  if(!lista.length)h+='<div class="av-sub">Nenhuma parcela vence hoje ou amanhã.</div>';
+  const item=a=>{
+    const bsrc=admin?'<span class="badge-src '+(a.origem==="kv"?"kv":"np")+'">'+(a.origem==="kv"?"KV":"NP")+'</span> ':'';
+    const conta=admin?(' · '+(a.dono?('conta: '+esc(a.dono)):'<span style="color:var(--pending)">sem conta</span>')):'';
+    return '<div class="av-it"><span>'+bsrc+'<b>'+esc(a.nome)+'</b><br><em>Parcela '+a.n+' · vence '+esc((a.venc||"").slice(0,5))+conta+'</em></span><b>'+fmtR$(a.valor)+'</b></div>';
+  };
+  h+='<div class="av-list">';
+  if(hoje.length)h+='<div class="av-grp hoje">Vence hoje ('+hoje.length+')</div>'+hoje.map(item).join("");
+  if(amanha.length)h+='<div class="av-grp amanha">Vence amanhã ('+amanha.length+')</div>'+amanha.map(item).join("");
+  h+='</div>';
+  if(!admin&&lista.length)h+='<div class="av-sub" style="margin-top:.5rem">Toque em “Pagar” na parcela para falar com a loja.</div>';
+  if("Notification" in window&&Notification.permission==="default")
+    h+='<div class="av-acts"><button class="btn btn-sm btn-ghost" id="notifPerm">Ativar notificações neste aparelho</button></div>';
+  h+='</div>';
+  box.innerHTML=h;box.classList.remove("hide");
+  el("notifX").onclick=()=>{notifFechado=true;box.classList.add("hide");};
+  const bp=el("notifPerm");
+  if(bp)bp.onclick=async()=>{
+    try{await Notification.requestPermission();}catch(e){}
+    notificarSistema(avisosAtuais,avisosAdmin?"admin":cli.login);
+    montarCaixaAvisos();
+  };
+}
+function notificarSistema(lista,login){
+  if(!lista.length||!login||!("Notification" in window)||Notification.permission!=="granted")return;
+  ["hoje","amanha"].forEach(tipo=>{
+    const it=lista.filter(a=>a.tipo===tipo);if(!it.length)return;
+    const k="npNotif_"+login+"_"+diaChave()+"_"+tipo;
+    let ja=0;try{ja=Number(localStorage.getItem(k))||0;}catch(e){}
+    if(ja>=it.length)return;               // já avisou hoje (só repete se aparecer parcela nova)
+    const titulo=(tipo==="hoje"?"Vence hoje":"Vence amanhã")+" · Nordeste Prime";
+    const corpo=login==="admin"
+      ?(it.length+" parcela(s): "+it.slice(0,3).map(a=>a.nome).join(", ")+(it.length>3?"…":""))
+      :it.map(a=>"Parcela "+a.n+" · "+fmtR$(a.valor)+(a.nome?" · "+a.nome:"")).join("\n");
+    mostrarNotificacao(titulo,corpo,k);
+    try{localStorage.setItem(k,String(it.length));}catch(e){}
+  });
+}
+function mostrarNotificacao(titulo,corpo,tag){
+  const opt={body:corpo,icon:"favicon.png",tag};
+  const direto=()=>{try{new Notification(titulo,opt);}catch(e){}};
+  if(navigator.serviceWorker&&navigator.serviceWorker.getRegistration){
+    navigator.serviceWorker.getRegistration().then(r=>{if(r)r.showNotification(titulo,opt);else direto();}).catch(direto);
+  }else direto();
+}
+
+/* =========================================================
+   ADMIN: CLIENTES COM VENCIMENTO AINDA SEM CONTA
+   Aparece ao entrar e a cada sincronização. "Fechar" esconde
+   até o próximo login — ou antes, se surgir cliente novo.
+   ========================================================= */
+let assocFechadoQtd=-1;
+function clientesSemConta(){
+  if(!fonte)return[];
+  const usados=new Set();
+  contasCache.forEach(c=>((c.payload||{}).keys||[]).forEach(k=>usados.add(k)));
+  const out=[];
+  fonte.base.forEach(b=>{
+    if(usados.has(b.key))return;
+    let f;try{f=fichaDe(b);}catch(e){return;}
+    if(f.saldo>0.005)out.push({b,f});
+  });
+  return out.sort((x,y)=>x.b.nome.localeCompare(y.b.nome));
+}
+function sugerirLogin(nome){
+  const base=(nome||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase()
+    .split(/[^a-z0-9]+/).filter(Boolean)[0]||"cliente";
+  const existentes=new Set(contasCache.map(c=>c.login));
+  let x=base,i=2;
+  while(existentes.has(x)||x===CONFIG.ADMIN_LOGIN||x==="__config")x=base+(i++);
+  return x;
+}
+function renderAvisoAssoc(){
+  const box=el("avisoAssoc");
+  const sem=clientesSemConta();
+  if(!sem.length||(assocFechadoQtd>=0&&sem.length<=assocFechadoQtd)){box.classList.add("hide");box.innerHTML="";return;}
+  let h='<div class="aviso assoc"><button class="x" id="assocX" title="Fechar">✕</button>';
+  h+='<h4>🆕 '+sem.length+' cliente(s) com vencimentos ainda sem conta no portal</h4>';
+  h+='<div class="av-sub">Toque em “Associar” para criar o acesso já com o cliente adicionado.</div>';
+  if(sem.length>6)h+='<input id="assocBusca" placeholder="Buscar cliente…" style="margin:.2rem 0 .4rem;padding:.55rem .8rem;font-size:.85rem">';
+  h+='<div class="av-list">';
+  sem.forEach(({b,f},i)=>{
+    const bsrc='<span class="badge-src '+(b.origem==="kv"?"kv":"np")+'">'+(b.origem==="kv"?"KV":"NP")+'</span> ';
+    const info=f.proxData?('próx. venc. '+esc(f.proxData.slice(0,5))+' · '):(f.semParcelas?'parcelas não geradas · ':'');
+    h+='<div class="av-it" data-nome="'+esc(b.nome.toLowerCase())+'"><span>'+bsrc+'<b>'+esc(b.nome)+'</b><br><em>'+info+'saldo '+fmtR$(f.saldo)+'</em></span>'+
+       '<button class="btn btn-sm" data-assoc="'+i+'">Associar</button></div>';
+  });
+  h+='</div><div class="av-acts"><button class="btn btn-sm btn-ghost" id="assocFechar">Fechar</button></div></div>';
+  box.innerHTML=h;box.classList.remove("hide");
+  const fechar=()=>{assocFechadoQtd=sem.length;box.classList.add("hide");};
+  el("assocX").onclick=fechar;el("assocFechar").onclick=fechar;
+  const bus=el("assocBusca");
+  if(bus)bus.oninput=()=>{const q=bus.value.trim().toLowerCase();
+    box.querySelectorAll(".av-it").forEach(it=>it.style.display=(!q||it.dataset.nome.includes(q))?"":"none");};
+  box.querySelectorAll("[data-assoc]").forEach(bt=>bt.onclick=()=>{
+    const {b}=sem[Number(bt.dataset.assoc)];
+    abrirModalConta(null,[b.key],b.nome);
+  });
+}
+
 /* ---------- config admin ---------- */
 async function salvarSenhaAdmin(){
   el("cfgSenhaErr").textContent="";el("cfgSenhaOk").textContent="";
@@ -1013,13 +1248,15 @@ el("inSenha").addEventListener("keydown",e=>{if(e.key==="Enter")entrar();});
 el("btnSair").onclick=()=>{
   const prev=cli.preview;cli={login:"",extrato:null,idx:0};
   if(prev){mostrar("viewAdmin");el("subtitle").textContent="Painel do administrador";renderContas();return;}
+  pararAutoSync();
   el("inLogin").value=el("inSenha").value="";mostrar("viewLogin");el("subtitle").textContent="Portal do cliente";};
-el("btnRefresh").onclick=atualizarCliente;
+el("btnRefresh").onclick=sincronizarCliente;
+el("btnNotif").onclick=()=>{notifFechado=false;montarCaixaAvisos();window.scrollTo({top:0,behavior:"smooth"});};
 el("buscaContas").oninput=()=>renderContas();
 el("btnNovaConta").onclick=()=>abrirModalConta(null);
 el("mCancelar").onclick=()=>el("ovConta").classList.add("hide");
 el("pgFechar").onclick=()=>el("ovPagar").classList.add("hide");
-el("btnSync").onclick=abrirAdmin;
+el("btnSync").onclick=sincronizarAdmin;
 el("btnSalvarSenha").onclick=salvarSenhaAdmin;
 el("btnSalvarPag").onclick=salvarPag;
 document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{

@@ -143,7 +143,7 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
     </div>
     <div class="topbtns hide" id="topBtns">
       <button class="btn btn-sm btn-ghost bell" id="btnNotif" title="Vencimentos de hoje e amanhã">🔔<span class="cnt hide" id="notifCnt"></span></button>
-      <button class="btn btn-sm btn-ghost" id="btnRefresh">Atualizar</button>
+      <button class="btn btn-sm btn-ghost" id="btnRefresh" title="Sincronizar agora com a base">🔄 Atualizar</button>
       <button class="btn btn-sm btn-ghost" id="btnSair">Sair</button>
     </div>
   </header>
@@ -746,7 +746,7 @@ function mostrar(view){
   ["viewLogin","viewAdmin","viewCliente"].forEach(v=>el(v).classList.add("hide"));
   el(view).classList.remove("hide");
   el("topBtns").classList.toggle("hide",view==="viewLogin");
-  el("btnRefresh").classList.toggle("hide",view!=="viewCliente");
+  el("btnRefresh").classList.toggle("hide",view==="viewLogin");
   if(view==="viewLogin"){el("notifBox").classList.add("hide");el("notifBox").innerHTML="";}
 }
 
@@ -1250,13 +1250,38 @@ el("btnSair").onclick=()=>{
   if(prev){mostrar("viewAdmin");el("subtitle").textContent="Painel do administrador";renderContas();return;}
   pararAutoSync();
   el("inLogin").value=el("inSenha").value="";mostrar("viewLogin");el("subtitle").textContent="Portal do cliente";};
-el("btnRefresh").onclick=sincronizarCliente;
+/* Sincronização manual (botão do topo e "Sincronizar agora") */
+let syncManualRodando=false;
+async function sincronizarManual(){
+  if(syncManualRodando)return;
+  syncManualRodando=true;
+  const bts=[el("btnRefresh"),el("btnSync")];
+  const txts=bts.map(b=>b.textContent);
+  bts.forEach(b=>{b.disabled=true;b.textContent="Sincronizando…";});
+  try{
+    if(!el("viewAdmin").classList.contains("hide")){
+      await sincronizarAdmin();
+    }else if(cli.preview){
+      // admin visualizando como cliente: sincroniza tudo e recarrega o extrato dessa conta
+      await sincronizarAdmin();
+      const c=contasCache.find(x=>x.login===cli.login);
+      if(c&&c.payload&&c.payload.extrato){cli.extrato=c.payload.extrato;renderCliente();atualizarAvisosCliente();}
+    }else{
+      await sincronizarCliente();
+    }
+    if(modoSync)iniciarAutoSync(modoSync);   // reinicia a contagem das 3h a partir de agora
+  }finally{
+    bts.forEach((b,i)=>{b.disabled=false;b.textContent=txts[i];});
+    syncManualRodando=false;
+  }
+}
+el("btnRefresh").onclick=sincronizarManual;
 el("btnNotif").onclick=()=>{notifFechado=false;montarCaixaAvisos();window.scrollTo({top:0,behavior:"smooth"});};
 el("buscaContas").oninput=()=>renderContas();
 el("btnNovaConta").onclick=()=>abrirModalConta(null);
 el("mCancelar").onclick=()=>el("ovConta").classList.add("hide");
 el("pgFechar").onclick=()=>el("ovPagar").classList.add("hide");
-el("btnSync").onclick=sincronizarAdmin;
+el("btnSync").onclick=sincronizarManual;
 el("btnSalvarSenha").onclick=salvarSenhaAdmin;
 el("btnSalvarPag").onclick=salvarPag;
 document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{

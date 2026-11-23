@@ -707,6 +707,8 @@ function aplicarJuros(ficha,contas,pags){
 /* valor que aparece pro cliente (com juros) e pro admin (original) */
 const saldoCli=f=>(f.saldoAjustado!=null?f.saldoAjustado:f.saldo)||0;
 const parcCli=p=>(p.ajustado!=null?p.ajustado:p.falta)||0;
+// Admin no "Exibir": true = mostra o valor original + "sugerido"; false = vê exatamente igual ao cliente
+const ADMIN_VE_SUGERIDO=false;
 const txtDias=n=>n+' dia'+(n===1?'':'s')+' de atraso';
 /* "R$ 162,00 (R$ 150,00 + R$ 12,00 de juros)" — o juros mostrado já é o do
    valor arredondado, pra soma dentro do parêntese bater com o total em vermelho */
@@ -1053,7 +1055,7 @@ function renderCliente(){
   {const MESES=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
    const hoje=hojeMeiaNoite();
    let totalGeral=0;const porMes={};
-   const adm=!!cli.preview;
+   const adm=!!(cli.preview&&ADMIN_VE_SUGERIDO);
    let totalSug=0;
    cs.forEach(cc=>{totalGeral+=adm?(cc.saldo||0):saldoCli(cc);totalSug+=saldoCli(cc);
      (cc.parcelas||[]).forEach(p=>{
@@ -1102,7 +1104,7 @@ function renderCliente(){
        box.appendChild(d);box.appendChild(det);});}}
   {const jur=c.juros||0;
    if(jur>0.005){
-     el("kSaldo").innerHTML=cli.preview
+     el("kSaldo").innerHTML=(cli.preview&&ADMIN_VE_SUGERIDO)
        ?fmtR$(c.saldo)+'<span class="sug">sugerido '+fmtR$(saldoCli(c))+'</span>'
        :'<span class="jur">'+fmtR$(saldoCli(c))+'</span>';
    }else el("kSaldo").textContent=fmtR$(c.saldo);}
@@ -1124,12 +1126,12 @@ function renderCliente(){
     const jp=p.juros||0;
     if(jp>0.005){
       const d=p.diasAtraso?(' ('+p.diasAtraso+' dia'+(p.diasAtraso===1?'':'s')+')'):'';
-      if(p.status==="paga")txt=(cli.preview?txt+' · juros pendente ':'Paga com atraso · juros pendente ')+
-        (cli.preview?'<span class="sug-in">sugerido '+fmtR$(parcCli(p))+'</span>':'<span class="jur">'+fmtR$(parcCli(p))+'</span>');
-      else if(cli.preview)txt+=' · <span class="sug-in">sugerido '+fmtR$(parcCli(p))+'</span>'+d;
+      if(p.status==="paga")txt=((cli.preview&&ADMIN_VE_SUGERIDO)?txt+' · juros pendente ':'Paga com atraso · juros pendente ')+
+        ((cli.preview&&ADMIN_VE_SUGERIDO)?'<span class="sug-in">sugerido '+fmtR$(parcCli(p))+'</span>':'<span class="jur">'+fmtR$(parcCli(p))+'</span>');
+      else if((cli.preview&&ADMIN_VE_SUGERIDO))txt+=' · <span class="sug-in">sugerido '+fmtR$(parcCli(p))+'</span>'+d;
       else txt="Venceu "+(p.venc?p.venc.slice(0,5):"")+(p.diasAtraso>0?' · <span class="jur-dias">'+txtDias(p.diasAtraso)+'</span>':'');
     }
-    const comJuros=!cli.preview&&jp>0.005&&p.status!=="paga";
+    const comJuros=!(cli.preview&&ADMIN_VE_SUGERIDO)&&jp>0.005&&p.status!=="paga";
     const titulo=comJuros
       ?'Parcela '+p.n+' · <span class="jur">'+fmtR$(parcCli(p))+'</span> <span class="jur-ao-lado">('+fmtR$(p.falta)+' + '+fmtR$(parcCli(p)-p.falta)+' de juros)</span>'
       :'Parcela '+p.n+' · '+fmtR$(p.valor);

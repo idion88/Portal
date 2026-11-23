@@ -139,6 +139,15 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
 .jur-det{display:block;font-size:.74rem;font-weight:500;color:var(--ink-soft);margin-top:.2rem;line-height:1.45}
 .jur-det .jur{font-size:.92rem}
 .jur-dias{color:var(--debt);font-weight:700}
+.rg-jur{font-size:.72rem;font-weight:500;opacity:.85;margin-left:.25rem;white-space:nowrap}
+.rg-mes-top .rg-jur{font-weight:500;color:var(--ink-soft)}
+@media(max-width:560px){
+  .rg-jur{display:block;margin-left:0;margin-top:.1rem}
+  .rg-it>span:last-child,.rg-mes-top>b{text-align:right;flex-shrink:0}
+  .rg-it>span:first-child{min-width:0}
+  .rg-mes-top .rg-jur{display:none}
+}
+.jur-ao-lado{font-size:.76rem;font-weight:500;color:var(--ink-soft);white-space:nowrap}
 </style>
 </head>
 <body>
@@ -1050,10 +1059,11 @@ function renderCliente(){
      (cc.parcelas||[]).forEach(p=>{
        const dt=parseDateBR(p.venc);if(!dt)return;
        const k=dt.getFullYear()*100+dt.getMonth();
-       if(!porMes[k])porMes[k]={ano:dt.getFullYear(),mes:dt.getMonth(),valor:0,late:false,itens:[]};
+       if(!porMes[k])porMes[k]={ano:dt.getFullYear(),mes:dt.getMonth(),valor:0,juros:0,late:false,itens:[]};
        const vAb=adm?p.falta:parcCli(p);   // cliente vê com juros; admin vê o original
        const aberta=vAb>0.005;
-       if(aberta)porMes[k].valor+=vAb;
+       const jIt=(!adm&&aberta)?Math.max(0,vAb-p.falta):0;   // juros já arredondado desta parcela
+       if(aberta){porMes[k].valor+=vAb;porMes[k].juros+=jIt;}
        const atrasada=aberta&&(p.status==="vencida"||p.status==="parcial-vencida");
        if(atrasada)porMes[k].late=true;
        const nTot=(cc.parcelas||[]).length;
@@ -1061,7 +1071,7 @@ function renderCliente(){
        if(nTot===1)rot+=" · única";
        else if(p.n===nTot)rot+=" · última";
        porMes[k].itens.push({venc:p.venc,conta:cc.nome,rot,origem:cc.origem||"np",
-         valor:aberta?vAb:p.valor,paga:!aberta,atrasada:atrasada||(aberta&&(p.juros||0)>0),parcial:p.status.startsWith("parcial")});
+         valor:aberta?vAb:p.valor,divida:p.falta,jur:jIt,paga:!aberta,atrasada:atrasada||(aberta&&(p.juros||0)>0),parcial:p.status.startsWith("parcial")});
      });});
    Object.values(porMes).forEach(m=>m.itens=m.itens.filter(i=>i.paga||i.valor>0.005));
    const meses=Object.keys(porMes).filter(k=>porMes[k].valor>0.005||porMes[k].itens.some(i=>!i.paga)).length?porMes:porMes;
@@ -1069,7 +1079,7 @@ function renderCliente(){
    el("rgTotal").innerHTML=adm
      ?fmtR$(totalGeral)+(totalSug-totalGeral>0.005?' <span class="sug-in">· sugerido '+fmtR$(totalSug)+'</span>':'')
      :(totalGeral-totOrig>0.005
-        ?'<span class="jur">'+fmtR$(totalGeral)+'</span> <span style="font-size:.8rem;font-weight:500;color:var(--ink-soft)">('+fmtR$(totOrig)+' + '+fmtR$(totalGeral-totOrig)+' de juros)</span>'
+        ?'<span class="jur">'+fmtR$(totalGeral)+'</span>'
         :fmtR$(totalGeral));
    el("rgSub").textContent=cs.length>1?("Soma das suas "+cs.length+" contas"):"";
    const ks=Object.keys(porMes).filter(k=>porMes[k].valor>0.005).sort((a,b)=>a-b);
@@ -1079,14 +1089,14 @@ function renderCliente(){
    else{el("rgMesesTit").style.display="";
      ks.forEach(k=>{const m=porMes[k];
        const d=document.createElement("div");d.className="rg-mes"+(m.late?" late":"");
-       d.innerHTML='<div class="rg-mes-top"><span>'+MESES[m.mes]+'/'+m.ano+(m.late?'<span class="tag">em atraso</span>':'')+'</span><b>'+fmtR$(m.valor)+' <span class="seta">▾</span></b></div>';
+       d.innerHTML='<div class="rg-mes-top"><span>'+MESES[m.mes]+'/'+m.ano+(m.late?'<span class="tag">em atraso</span>':'')+'</span><b>'+fmtR$(m.valor)+(m.juros>0.005?'<span class="rg-jur">('+fmtR$(m.valor-m.juros)+' + '+fmtR$(m.juros)+' de juros)</span>':'')+' <span class="seta">▾</span></b></div>';
        const det=document.createElement("div");det.className="rg-det hide";
        m.itens.sort((a,b)=>{const da=parseDateBR(a.venc),db=parseDateBR(b.venc);return (da&&db)?da-db:0;});
        m.itens.forEach(it=>{
          const cls=it.paga?"pg":(it.atrasada?"at":"");
          const st=it.paga?"paga":(it.atrasada?"em atraso":(it.parcial?"falta":"a vencer"));
          const bsrc='<span class="badge-src '+(it.origem==="kv"?"kv":"np")+'">'+(it.origem==="kv"?"KV":"NP")+'</span>';
-         det.innerHTML+='<div class="rg-it '+cls+'"><span>'+it.venc.slice(0,5)+' '+bsrc+' · '+it.conta+' · '+it.rot+'</span><span><b>'+fmtR$(it.valor)+'</b> <em>'+st+'</em></span></div>';});
+         det.innerHTML+='<div class="rg-it '+cls+'"><span>'+it.venc.slice(0,5)+' '+bsrc+' · '+it.conta+' · '+it.rot+'</span><span><b>'+fmtR$(it.valor)+'</b>'+(it.jur>0.005?'<span class="rg-jur">('+fmtR$(it.divida)+' + '+fmtR$(it.jur)+' de juros)</span>':'')+' <em>'+st+'</em></span></div>';});
        d.querySelector(".rg-mes-top").onclick=()=>{det.classList.toggle("hide");
          d.querySelector(".seta").textContent=det.classList.contains("hide")?"▾":"▴";};
        box.appendChild(d);box.appendChild(det);});}}
@@ -1094,8 +1104,7 @@ function renderCliente(){
    if(jur>0.005){
      el("kSaldo").innerHTML=cli.preview
        ?fmtR$(c.saldo)+'<span class="sug">sugerido '+fmtR$(saldoCli(c))+'</span>'
-       :'<span class="jur">'+fmtR$(saldoCli(c))+'</span><span class="jur-det">('+fmtR$(c.saldo)+' + '+fmtR$(saldoCli(c)-c.saldo)+' de juros)'+
-         (maiorAtraso(c)>0?'<br><span class="jur-dias">'+txtDias(maiorAtraso(c))+'</span>':'')+'</span>';
+       :'<span class="jur">'+fmtR$(saldoCli(c))+'</span>';
    }else el("kSaldo").textContent=fmtR$(c.saldo);}
   el("kProx").textContent=c.proxData?(c.proxData.slice(0,5)+" · "+fmtR$(c.proxValor)):(c.saldo<=0.005?"Quitado 🎉":"—");
   const box=el("cliParcelas");box.innerHTML="";
@@ -1118,9 +1127,13 @@ function renderCliente(){
       if(p.status==="paga")txt=(cli.preview?txt+' · juros pendente ':'Paga com atraso · juros pendente ')+
         (cli.preview?'<span class="sug-in">sugerido '+fmtR$(parcCli(p))+'</span>':'<span class="jur">'+fmtR$(parcCli(p))+'</span>');
       else if(cli.preview)txt+=' · <span class="sug-in">sugerido '+fmtR$(parcCli(p))+'</span>'+d;
-      else txt="Venceu "+(p.venc?p.venc.slice(0,5):"")+'<span class="jur-det">'+detalheJuros(p.falta,parcCli(p),p.diasAtraso||0)+'</span>';
+      else txt="Venceu "+(p.venc?p.venc.slice(0,5):"")+(p.diasAtraso>0?' · <span class="jur-dias">'+txtDias(p.diasAtraso)+'</span>':'');
     }
-    div.innerHTML='<div><div class="pn">Parcela '+p.n+' · '+fmtR$(p.valor)+'</div><div class="pd">'+txt+'</div></div>';
+    const comJuros=!cli.preview&&jp>0.005&&p.status!=="paga";
+    const titulo=comJuros
+      ?'Parcela '+p.n+' · <span class="jur">'+fmtR$(parcCli(p))+'</span> <span class="jur-ao-lado">('+fmtR$(p.falta)+' + '+fmtR$(parcCli(p)-p.falta)+' de juros)</span>'
+      :'Parcela '+p.n+' · '+fmtR$(p.valor);
+    div.innerHTML='<div><div class="pn">'+titulo+'</div><div class="pd">'+txt+'</div></div>';
     const right=document.createElement("div");right.style.display="flex";right.style.gap=".5rem";right.style.alignItems="center";
     const t=document.createElement("span");t.className="tag "+tag;
     t.textContent={paga:"Paga",aberta:"Em aberto",parcial:"Parcial",vencida:"Vencida"}[tag];

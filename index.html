@@ -132,6 +132,10 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
 .av-it:last-child{border-bottom:none}
 .av-it em{font-style:normal;color:var(--ink-soft);font-size:.74rem}
 .av-acts{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.7rem}
+/* juros de atraso */
+.sug{display:block;font-size:.72rem;font-weight:700;color:var(--pending);margin-top:.15rem}
+.sug-in{font-weight:700;color:var(--pending)}
+.jur{color:var(--debt);font-weight:700}
 </style>
 </head>
 <body>
@@ -283,6 +287,7 @@ const CONFIG = {
   ADMIN_LOGIN: "admin",
   SENHA_ADMIN_PADRAO: "@131188@",
   PIX_PADRAO: "81989552704",
+  TAXA_JUROS_DIA: 0.5,   // % ao dia sobre o valor em atraso (mesma regra do Gerente)
   ZAP_PADRAO: "5581982423329"
 };
 
@@ -626,6 +631,71 @@ async function carregarFonte(){
   }catch(e){console.warn("Karvore indisponível:",e);}
   fonte={base,pagamentos:u.pagamentos};
 }
+/* =========================================================
+   JUROS DE ATRASO — 0,5% ao dia, contado por trecho de tempo
+   (mesma regra do Gerente):
+   - cada parcela rende juros só sobre o que dela ficou em aberto,
+     pelos dias em que ficou em aberto;
+   - juros nunca gera juros;
+   - o pagamento abate primeiro o principal de todas as parcelas
+     (mais antiga primeiro) e só depois os juros acumulados;
+   - parcela já quitada não mostra juros: só as que estão em aberto.
+   O valor ajustado é arredondado pra cima no real inteiro.
+   ========================================================= */
+function motorJuros(contas,pags,taxaDia){
+  const hoje=hojeMeiaNoite();
+  const r2=v=>Math.round(v*100)/100;
+  const dias=(a,b)=>Math.round((b-a)/86400000);
+  const cs=contas.map(x=>({n:x.n,venc:x.venc,principal:r2(x.principal),juros:0,last:null,ativa:false}));
+  const ordem=cs.slice().sort((a,b)=>(a.venc&&b.venc)?((a.venc-b.venc)||(a.n-b.n)):(a.n-b.n));
+  function acumular(alvo){
+    ordem.forEach(x=>{
+      if(!x.venc)return;
+      if(!x.ativa){if(dias(x.venc,alvo)>0){x.ativa=true;x.last=x.venc;}else return;}
+      const d=dias(x.last,alvo);if(d<=0)return;
+      if(x.principal>0.005)x.juros=r2(x.juros+x.principal*taxaDia*d);
+      x.last=alvo;
+    });
+  }
+  function aplicar(v){
+    let r=r2(v);
+    for(const x of ordem){if(r<=0.005)return;if(x.principal<=0.005)continue;
+      const u=Math.min(r,x.principal);x.principal=r2(x.principal-u);r=r2(r-u);}
+    for(const x of ordem){if(r<=0.005)return;if(x.juros<=0.005)continue;
+      const u=Math.min(r,x.juros);x.juros=r2(x.juros-u);r=r2(r-u);}
+  }
+  const chave=p=>p.t?p.t.getTime():-8.64e15;   // sem data = entra primeiro
+  pags.filter(p=>p.valor>0.005).sort((a,b)=>chave(a)-chave(b)).forEach(p=>{
+    if(p.t){const t=new Date(p.t.getFullYear(),p.t.getMonth(),p.t.getDate());acumular(t>hoje?hoje:t);}
+    aplicar(p.valor);
+  });
+  acumular(hoje);
+  const out={};
+  cs.forEach(x=>{out[x.n]={juros:x.juros,dias:x.venc?Math.max(0,dias(x.venc,hoje)):0};});
+  return out;
+}
+function aplicarJuros(ficha,contas,pags){
+  const taxa=(Number(CONFIG.TAXA_JUROS_DIA)||0)/100;
+  let mapa={};
+  try{if(taxa>0&&contas.length)mapa=motorJuros(contas,pags,taxa);}catch(e){console.warn("juros",e);}
+  let extra=0;
+  (ficha.parcelas||[]).forEach(p=>{
+    const m=mapa[p.n]||{juros:0,dias:0};
+    // só parcela ainda em aberto mostra juros; a que já foi quitada não cobra mais nada
+    p.juros=(p.falta>0.005&&m.juros>0.005)?m.juros:0;
+    p.diasAtraso=m.dias;
+    p.ajustado=p.juros>0?Math.ceil(p.falta+p.juros-1e-9):p.falta;
+    extra+=p.ajustado-p.falta;
+  });
+  ficha.juros=Math.round(extra*100)/100;
+  ficha.saldoAjustado=Math.round((ficha.saldo+ficha.juros)*100)/100;
+  ficha.taxaJuros=Number(CONFIG.TAXA_JUROS_DIA)||0;
+  return ficha;
+}
+/* valor que aparece pro cliente (com juros) e pro admin (original) */
+const saldoCli=f=>(f.saldoAjustado!=null?f.saldoAjustado:f.saldo)||0;
+const parcCli=p=>(p.ajustado!=null?p.ajustado:p.falta)||0;
+
 /* ---- fichas do Karvore: installments {n,value,due,credit,payments[],paid} ---- */
 function isoParaBR(iso){if(!iso)return"";const p=iso.slice(0,10).split("-");return p.length===3?(p[2]+"/"+p[1]+"/"+p[0]):iso;}
 function computeFichaKV(b){
@@ -651,9 +721,15 @@ function computeFichaKV(b){
     parcs.push({n:inst.n||i+1,venc:ds,valor,falta,status:st,pagoEm});
   });
   const total=b.total||recebido;
-  return{key:b.key,nome:b.nome,origem:"kv",total,recebido:Math.min(recebido,total),
+  const ficha={key:b.key,nome:b.nome,origem:"kv",total,recebido:Math.min(recebido,total),
     saldo:Math.max(0,total-recebido),parcelas:parcs,proxData,proxValor,
     semParcelas:insts.length===0};
+  // juros: todos os pagamentos da venda, em ordem de data
+  const contas=insts.map((inst,i)=>({n:inst.n||i+1,venc:parseDateBR(isoParaBR(inst.due)),principal:Number(inst.value)||0}));
+  const pags=[];
+  insts.forEach(inst=>(Array.isArray(inst.payments)?inst.payments:[]).forEach(pg=>
+    pags.push({t:parseDateBR(isoParaBR(pg.date||"")),valor:Number(pg.value)||0})));
+  return aplicarJuros(ficha,contas,pags);
 }
 
 /* mesma lógica do Gerente: parcelas sequenciais + datas congeladas */
@@ -679,8 +755,12 @@ function computeFicha(b){
     if(falta>0.005&&dt&&dt>=hoje&&!proxData){proxData=ds;proxValor=falta;}
     parcs.push({n:i+1,venc:ds,valor:valorParcela,falta,status:st,pagoEm:e.datasPagas[i]||""});
   }
-  return{key:b.key,nome:b.nome,origem:"np",total:b.total,recebido,saldo,parcelas:parcs,proxData,proxValor,
+  const ficha={key:b.key,nome:b.nome,origem:"np",total:b.total,recebido,saldo,parcelas:parcs,proxData,proxValor,
     semParcelas:parcelasTotal===0};
+  // juros: recebido da planilha original (sem data) entra primeiro; depois os pagamentos pela data
+  const contas=parcs.map(p=>({n:p.n,venc:parseDateBR(p.venc),principal:valorParcela}));
+  const pags=[{t:null,valor:b.recebidoOrig||0}].concat(e.pagos.map(pg=>({t:parseDateBR(pg.data||""),valor:Number(pg.valor)||0})));
+  return aplicarJuros(ficha,contas,pags);
 }
 
 /* ---------- portal: contas na nuvem ---------- */
@@ -790,7 +870,10 @@ async function renderContas(){
     if(temNP)badges+='<span class="badge-src np">NP</span> ';
     if(temKV)badges+='<span class="badge-src kv">KV</span>';
     const div=document.createElement("div");div.className="acc-row";
-    div.innerHTML='<div><div class="nm">'+c.login+' '+badges+'</div><div class="meta">'+keys.length+' cliente(s) associado(s)</div></div>'+
+    const exC=((c.payload&&c.payload.extrato)||{}).clientes||[];
+    const sOrig=exC.reduce((t,f)=>t+(f.saldo||0),0),sAjus=exC.reduce((t,f)=>t+saldoCli(f),0);
+    const linhaSaldo=exC.length?(' · saldo '+fmtR$(sOrig)+(sAjus-sOrig>0.005?' · <span class="sug-in">sugerido '+fmtR$(sAjus)+'</span>':'')):'';
+    div.innerHTML='<div><div class="nm">'+c.login+' '+badges+'</div><div class="meta">'+keys.length+' cliente(s) associado(s)'+linhaSaldo+'</div></div>'+
       '<div style="display:flex;gap:.4rem;flex-wrap:wrap"><button class="btn btn-sm" data-cp="'+c.login+'">Copiar dados</button>'+
       '<button class="btn btn-sm btn-ghost" data-ed="'+c.login+'">Editar</button>'+
       '<button class="btn btn-sm btn-ghost" data-vw="'+c.login+'">Exibir</button>'+
@@ -950,13 +1033,16 @@ function renderCliente(){
   {const MESES=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
    const hoje=hojeMeiaNoite();
    let totalGeral=0;const porMes={};
-   cs.forEach(cc=>{totalGeral+=cc.saldo||0;
+   const adm=!!cli.preview;
+   let totalSug=0;
+   cs.forEach(cc=>{totalGeral+=adm?(cc.saldo||0):saldoCli(cc);totalSug+=saldoCli(cc);
      (cc.parcelas||[]).forEach(p=>{
        const dt=parseDateBR(p.venc);if(!dt)return;
        const k=dt.getFullYear()*100+dt.getMonth();
        if(!porMes[k])porMes[k]={ano:dt.getFullYear(),mes:dt.getMonth(),valor:0,late:false,itens:[]};
-       const aberta=p.falta>0.005;
-       if(aberta)porMes[k].valor+=p.falta;
+       const vAb=adm?p.falta:parcCli(p);   // cliente vê com juros; admin vê o original
+       const aberta=vAb>0.005;
+       if(aberta)porMes[k].valor+=vAb;
        const atrasada=aberta&&(p.status==="vencida"||p.status==="parcial-vencida");
        if(atrasada)porMes[k].late=true;
        const nTot=(cc.parcelas||[]).length;
@@ -964,11 +1050,11 @@ function renderCliente(){
        if(nTot===1)rot+=" · única";
        else if(p.n===nTot)rot+=" · última";
        porMes[k].itens.push({venc:p.venc,conta:cc.nome,rot,origem:cc.origem||"np",
-         valor:aberta?p.falta:p.valor,paga:!aberta,atrasada,parcial:p.status.startsWith("parcial")});
+         valor:aberta?vAb:p.valor,paga:!aberta,atrasada:atrasada||(aberta&&(p.juros||0)>0),parcial:p.status.startsWith("parcial")});
      });});
    Object.values(porMes).forEach(m=>m.itens=m.itens.filter(i=>i.paga||i.valor>0.005));
    const meses=Object.keys(porMes).filter(k=>porMes[k].valor>0.005||porMes[k].itens.some(i=>!i.paga)).length?porMes:porMes;
-   el("rgTotal").textContent=fmtR$(totalGeral);
+   el("rgTotal").innerHTML=fmtR$(totalGeral)+(adm&&totalSug-totalGeral>0.005?' <span class="sug-in">· sugerido '+fmtR$(totalSug)+'</span>':'');
    el("rgSub").textContent=cs.length>1?("Soma das suas "+cs.length+" contas"):"";
    const ks=Object.keys(porMes).filter(k=>porMes[k].valor>0.005).sort((a,b)=>a-b);
    const box=el("rgMeses");box.innerHTML="";
@@ -988,7 +1074,12 @@ function renderCliente(){
        d.querySelector(".rg-mes-top").onclick=()=>{det.classList.toggle("hide");
          d.querySelector(".seta").textContent=det.classList.contains("hide")?"▾":"▴";};
        box.appendChild(d);box.appendChild(det);});}}
-  el("kSaldo").textContent=fmtR$(c.saldo);
+  {const jur=c.juros||0;
+   if(jur>0.005){
+     el("kSaldo").innerHTML=cli.preview
+       ?fmtR$(c.saldo)+'<span class="sug">sugerido '+fmtR$(saldoCli(c))+'</span>'
+       :fmtR$(saldoCli(c))+'<span class="sug">inclui '+fmtR$(jur)+' de juros por atraso</span>';
+   }else el("kSaldo").textContent=fmtR$(c.saldo);}
   el("kProx").textContent=c.proxData?(c.proxData.slice(0,5)+" · "+fmtR$(c.proxValor)):(c.saldo<=0.005?"Quitado 🎉":"—");
   const box=el("cliParcelas");box.innerHTML="";
   if(c.semParcelas||!c.parcelas.length){
@@ -1004,6 +1095,15 @@ function renderCliente(){
     else if(p.status==="parcial"||p.status==="parcial-vencida"){tag=p.status==="parcial-vencida"?"vencida":"parcial";txt="Falta "+fmtR$(p.falta);}
     else if(p.status==="vencida"){tag="vencida";txt="Venceu "+(p.venc?p.venc.slice(0,5):"");}
     else{tag="aberta";txt=p.venc?("Vence "+p.venc.slice(0,5)):"Em aberto";}
+    const jp=p.juros||0;
+    if(jp>0.005){
+      const d=p.diasAtraso?(' ('+p.diasAtraso+' dia'+(p.diasAtraso===1?'':'s')+')'):'';
+      if(p.status==="paga")txt=(cli.preview?txt+' · juros pendente ':'Paga com atraso · juros pendente ')+
+        (cli.preview?'<span class="sug-in">sugerido '+fmtR$(parcCli(p))+'</span>':'<span class="jur">'+fmtR$(parcCli(p))+'</span>');
+      else txt+=cli.preview
+        ?' · <span class="sug-in">sugerido '+fmtR$(parcCli(p))+'</span>'+d
+        :' · com juros: <span class="jur">'+fmtR$(parcCli(p))+'</span>'+d;
+    }
     div.innerHTML='<div><div class="pn">Parcela '+p.n+' · '+fmtR$(p.valor)+'</div><div class="pd">'+txt+'</div></div>';
     const right=document.createElement("div");right.style.display="flex";right.style.gap=".5rem";right.style.alignItems="center";
     const t=document.createElement("span");t.className="tag "+tag;
@@ -1019,7 +1119,7 @@ function botaoPagar(desc){
   bt.textContent="Como pagar";bt.onclick=()=>abrirPagar(null);return bt;
 }
 function abrirPagar(p){
-  el("pgTitulo").textContent=p?("Pagar parcela "+p.n+" · "+fmtR$(p.falta||p.valor)):"Como pagar";
+  el("pgTitulo").textContent=p?("Pagar parcela "+p.n+" · "+fmtR$(parcCli(p)||p.valor)):"Como pagar";
   const msg=encodeURIComponent("Olá! Quero combinar o pagamento"+(p?(" da parcela "+p.n):"")+" (login: "+cli.login+").");
   el("pgZap").onclick=()=>window.open("https://wa.me/"+(cfg.zap||CONFIG.ZAP_PADRAO)+"?text="+msg,"_blank");
   el("ovPagar").classList.remove("hide");

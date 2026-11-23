@@ -136,6 +136,9 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
 .sug{display:block;font-size:.72rem;font-weight:700;color:var(--pending);margin-top:.15rem}
 .sug-in{font-weight:700;color:var(--pending)}
 .jur{color:var(--debt);font-weight:700}
+.jur-det{display:block;font-size:.74rem;font-weight:500;color:var(--ink-soft);margin-top:.2rem;line-height:1.45}
+.jur-det .jur{font-size:.92rem}
+.jur-dias{color:var(--debt);font-weight:700}
 </style>
 </head>
 <body>
@@ -695,6 +698,14 @@ function aplicarJuros(ficha,contas,pags){
 /* valor que aparece pro cliente (com juros) e pro admin (original) */
 const saldoCli=f=>(f.saldoAjustado!=null?f.saldoAjustado:f.saldo)||0;
 const parcCli=p=>(p.ajustado!=null?p.ajustado:p.falta)||0;
+const txtDias=n=>n+' dia'+(n===1?'':'s')+' de atraso';
+/* "R$ 162,00 (R$ 150,00 + R$ 12,00 de juros)" — o juros mostrado já é o do
+   valor arredondado, pra soma dentro do parêntese bater com o total em vermelho */
+function maiorAtraso(f){return Math.max(0,...(f.parcelas||[]).filter(p=>(p.juros||0)>0.005).map(p=>p.diasAtraso||0));}
+function detalheJuros(divida,total,dias){
+  return '<span class="jur">'+fmtR$(total)+'</span> ('+fmtR$(divida)+' + '+fmtR$(total-divida)+' de juros)'+
+    (dias>0?' · <span class="jur-dias">'+txtDias(dias)+'</span>':'');
+}
 
 /* ---- fichas do Karvore: installments {n,value,due,credit,payments[],paid} ---- */
 function isoParaBR(iso){if(!iso)return"";const p=iso.slice(0,10).split("-");return p.length===3?(p[2]+"/"+p[1]+"/"+p[0]):iso;}
@@ -1054,7 +1065,12 @@ function renderCliente(){
      });});
    Object.values(porMes).forEach(m=>m.itens=m.itens.filter(i=>i.paga||i.valor>0.005));
    const meses=Object.keys(porMes).filter(k=>porMes[k].valor>0.005||porMes[k].itens.some(i=>!i.paga)).length?porMes:porMes;
-   el("rgTotal").innerHTML=fmtR$(totalGeral)+(adm&&totalSug-totalGeral>0.005?' <span class="sug-in">· sugerido '+fmtR$(totalSug)+'</span>':'');
+   const totOrig=cs.reduce((t,f)=>t+(f.saldo||0),0);
+   el("rgTotal").innerHTML=adm
+     ?fmtR$(totalGeral)+(totalSug-totalGeral>0.005?' <span class="sug-in">· sugerido '+fmtR$(totalSug)+'</span>':'')
+     :(totalGeral-totOrig>0.005
+        ?'<span class="jur">'+fmtR$(totalGeral)+'</span> <span style="font-size:.8rem;font-weight:500;color:var(--ink-soft)">('+fmtR$(totOrig)+' + '+fmtR$(totalGeral-totOrig)+' de juros)</span>'
+        :fmtR$(totalGeral));
    el("rgSub").textContent=cs.length>1?("Soma das suas "+cs.length+" contas"):"";
    const ks=Object.keys(porMes).filter(k=>porMes[k].valor>0.005).sort((a,b)=>a-b);
    const box=el("rgMeses");box.innerHTML="";
@@ -1078,7 +1094,8 @@ function renderCliente(){
    if(jur>0.005){
      el("kSaldo").innerHTML=cli.preview
        ?fmtR$(c.saldo)+'<span class="sug">sugerido '+fmtR$(saldoCli(c))+'</span>'
-       :fmtR$(saldoCli(c))+'<span class="sug">inclui '+fmtR$(jur)+' de juros por atraso</span>';
+       :'<span class="jur">'+fmtR$(saldoCli(c))+'</span><span class="jur-det">('+fmtR$(c.saldo)+' + '+fmtR$(saldoCli(c)-c.saldo)+' de juros)'+
+         (maiorAtraso(c)>0?'<br><span class="jur-dias">'+txtDias(maiorAtraso(c))+'</span>':'')+'</span>';
    }else el("kSaldo").textContent=fmtR$(c.saldo);}
   el("kProx").textContent=c.proxData?(c.proxData.slice(0,5)+" · "+fmtR$(c.proxValor)):(c.saldo<=0.005?"Quitado 🎉":"—");
   const box=el("cliParcelas");box.innerHTML="";
@@ -1100,9 +1117,8 @@ function renderCliente(){
       const d=p.diasAtraso?(' ('+p.diasAtraso+' dia'+(p.diasAtraso===1?'':'s')+')'):'';
       if(p.status==="paga")txt=(cli.preview?txt+' · juros pendente ':'Paga com atraso · juros pendente ')+
         (cli.preview?'<span class="sug-in">sugerido '+fmtR$(parcCli(p))+'</span>':'<span class="jur">'+fmtR$(parcCli(p))+'</span>');
-      else txt+=cli.preview
-        ?' · <span class="sug-in">sugerido '+fmtR$(parcCli(p))+'</span>'+d
-        :' · com juros: <span class="jur">'+fmtR$(parcCli(p))+'</span>'+d;
+      else if(cli.preview)txt+=' · <span class="sug-in">sugerido '+fmtR$(parcCli(p))+'</span>'+d;
+      else txt="Venceu "+(p.venc?p.venc.slice(0,5):"")+'<span class="jur-det">'+detalheJuros(p.falta,parcCli(p),p.diasAtraso||0)+'</span>';
     }
     div.innerHTML='<div><div class="pn">Parcela '+p.n+' · '+fmtR$(p.valor)+'</div><div class="pd">'+txt+'</div></div>';
     const right=document.createElement("div");right.style.display="flex";right.style.gap=".5rem";right.style.alignItems="center";

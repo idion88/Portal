@@ -161,6 +161,9 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
 .hist-val small{display:block;font-size:.7rem;color:var(--ink-soft);margin-top:.1rem}
 .hist-pend{color:var(--pending);font-weight:700}
 .hist-mais{width:100%;margin-top:.6rem}
+/* link de acesso */
+.link-box{background:var(--line-soft);border-radius:10px;padding:.6rem .7rem;font-size:.78rem;word-break:break-all;color:var(--ink-soft);margin:.3rem 0 .5rem}
+.link-acts{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.4rem}
 .jur-ao-lado{font-size:.76rem;font-weight:500;color:var(--ink-soft);white-space:nowrap}
 </style>
 </head>
@@ -186,7 +189,8 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
     <div id="viewLogin" class="login-card">
       <img class="logo-lg" src="apple-touch-icon.png" alt="Portal">
       <h2>Bem-vindo</h2>
-      <p>Entre com o login e senha fornecidos pela loja.</p>
+      <p id="loginMsg">Cliente: acesse pelo link que a loja enviou pra você no WhatsApp. Não precisa de login nem senha.</p>
+      <p style="font-size:.78rem;margin-top:.6rem">Acesso do administrador:</p>
       <input id="inLogin" placeholder="Login" autocomplete="username">
       <input id="inSenha" placeholder="Senha" type="password" autocomplete="current-password">
       <button class="btn" id="btnEntrar">Entrar</button>
@@ -226,7 +230,7 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
         <div class="card">
           <h3>Pagamento</h3>
           <label>WhatsApp para comprovantes (só números, com 55)</label><input id="cfgZap">
-          <label>Link do portal (usado no “Copiar dados”)</label><input id="cfgLink" placeholder="https://seusite.github.io/portal.html">
+          <label>Link do portal (base do link de acesso de cada cliente)</label><input id="cfgLink" placeholder="https://seusite.github.io/portal.html">
           <div style="margin-top:.9rem"><button class="btn btn-sm" id="btnSalvarPag">Salvar</button></div>
           <div class="ok-msg" id="cfgPagOk"></div>
         </div>
@@ -270,7 +274,8 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
   <div class="modal">
     <h3 id="mContaTitulo">Nova conta</h3>
     <label>Login (sem espaços)</label><input id="mLogin" autocapitalize="none">
-    <label>Senha</label><input id="mSenha" placeholder="Deixe vazio para manter a atual">
+    <label>Link de acesso do cliente</label>
+    <div id="mLinkArea"></div>
     <label>Já adicionados nesta conta</label>
     <div class="cli-pick sel-list" id="mSelecionados"></div>
     <label style="margin-top:.8rem">Adicionar clientes</label>
@@ -885,10 +890,66 @@ function montarExtrato(keys){
     .filter(f=>f.saldo>0.005);
   return{clientes,atualizado:new Date().toISOString()};
 }
+/* =========================================================
+   ACESSO POR LINK ÚNICO (sem login e senha para o cliente)
+   Cada conta tem um código secreto (token). O link leva login + token:
+     .../?u=maria&k=7f3k9q...
+   "Gerar novo link" troca o token e o link antigo para de funcionar.
+   ========================================================= */
+function novoToken(){
+  try{const a=new Uint8Array(15);crypto.getRandomValues(a);
+    return Array.from(a,b=>(b%36).toString(36)).join("");}
+  catch(e){return (Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2)).slice(0,15);}
+}
+function baseDoPortal(){
+  if(cfg.link)return cfg.link.split("#")[0].split("?")[0];
+  if(location.protocol.startsWith("http"))return location.origin+location.pathname;
+  return "";
+}
+function linkDe(login,token){
+  const base=baseDoPortal();
+  return base?(base+"?u="+encodeURIComponent(login)+"&k="+encodeURIComponent(token)):"";
+}
+/* garante que a conta tenha token e tira a senha antiga (substituída pelo link) */
+function migrarParaLink(p){
+  let mudou=false;
+  if(!p.token){p.token=novoToken();mudou=true;}
+  if("senha" in p||"senhaTexto" in p){delete p.senha;delete p.senhaTexto;mudou=true;}
+  return mudou;
+}
+const LINK_SALVO="npPortalLink";
+async function acessarPorLink(u,k,silencioso){
+  try{
+    const row=await getConta(String(u).toLowerCase());
+    if(!row||!row.payload||!row.payload.token||row.payload.token!==k){
+      try{localStorage.removeItem(LINK_SALVO);}catch(e){}
+      if(!silencioso)el("loginMsg").innerHTML='<span style="color:var(--debt);font-weight:700">Este link não é mais válido.</span> Peça um novo link à loja pelo WhatsApp.';
+      return false;
+    }
+    try{localStorage.setItem(LINK_SALVO,JSON.stringify({u:row.login||u,k}));}catch(e){}
+    await carregarCfg();
+    abrirCliente(row.login||String(u).toLowerCase(),row.payload);
+    return true;
+  }catch(e){
+    if(!silencioso)el("loginMsg").textContent="Não foi possível abrir sua conta agora (sem conexão). Tente de novo em instantes.";
+    return false;
+  }
+}
+/* ao abrir a página: link na URL > link salvo neste aparelho > tela de login */
+async function entradaPorLink(){
+  let u=null,k=null;
+  try{const q=new URLSearchParams(location.search);u=q.get("u");k=q.get("k");}catch(e){}
+  if(u&&k){await acessarPorLink(u,k,false);return;}
+  let s=null;try{s=JSON.parse(localStorage.getItem(LINK_SALVO)||"null");}catch(e){}
+  if(s&&s.u&&s.k)await acessarPorLink(s.u,s.k,true);
+}
+
 async function publicarTudo(){
   const contas=await listarContas();
   for(const c of contas){
     const p=c.payload||{};
+    migrarParaLink(p);
+    c.payload=p;
     p.extrato=montarExtrato(p.keys||[]);
     await upsertConta(c.login,p);
   }
@@ -908,10 +969,7 @@ async function entrar(){
       if(h!==cfg.senhaHash){el("loginErr").textContent="Senha incorreta.";return;}
       abrirAdmin();return;
     }
-    const row=await getConta(login);
-    if(!row||!row.payload||row.payload.senha!==h){el("loginErr").textContent="Login ou senha incorretos.";return;}
-    await carregarCfg();
-    abrirCliente(login,row.payload);
+    el("loginErr").textContent="O acesso de clientes agora é só pelo link enviado pela loja.";
   }catch(e){el("loginErr").textContent="Erro de conexão: "+e.message;}
 }
 
@@ -967,7 +1025,7 @@ async function renderContas(){
     const sOrig=exC.reduce((t,f)=>t+(f.saldo||0),0),sAjus=exC.reduce((t,f)=>t+saldoCli(f),0);
     const linhaSaldo=exC.length?(' · saldo '+fmtR$(sOrig)+(sAjus-sOrig>0.005?' · <span class="sug-in">sugerido '+fmtR$(sAjus)+'</span>':'')):'';
     div.innerHTML='<div><div class="nm">'+c.login+' '+badges+'</div><div class="meta">'+keys.length+' cliente(s) associado(s)'+linhaSaldo+'</div></div>'+
-      '<div style="display:flex;gap:.4rem;flex-wrap:wrap"><button class="btn btn-sm" data-cp="'+c.login+'">Copiar dados</button>'+
+      '<div style="display:flex;gap:.4rem;flex-wrap:wrap"><button class="btn btn-sm" data-cp="'+c.login+'">Copiar link</button>'+
       '<button class="btn btn-sm btn-ghost" data-ed="'+c.login+'">Editar</button>'+
       '<button class="btn btn-sm btn-ghost" data-vw="'+c.login+'">Exibir</button>'+
       '<button class="btn btn-sm btn-danger" data-del="'+c.login+'">Excluir</button></div>';
@@ -989,12 +1047,29 @@ async function renderContas(){
 }
 
 /* modal conta */
-let editandoLogin=null;
+let editandoLogin=null,trocarLink=false;
+function renderLinkModal(){
+  const area=el("mLinkArea");
+  if(!editandoLogin){area.innerHTML='<p class="sub" style="margin:.2rem 0 .6rem">O link é criado automaticamente ao salvar. Depois é só tocar em “Copiar link” e mandar pro cliente.</p>';return;}
+  const p=((contasCache.find(c=>c.login===editandoLogin)||{}).payload)||{};
+  if(trocarLink){area.innerHTML='<p class="sub" style="margin:.2rem 0 .6rem;color:var(--pending)">Um link novo será criado ao salvar. O link antigo vai parar de funcionar.</p>';return;}
+  const lk=p.token?linkDe(editandoLogin,p.token):"";
+  area.innerHTML=(lk?'<div class="link-box">'+esc(lk)+'</div>':
+      '<p class="sub" style="margin:.2rem 0 .4rem">'+(p.token?'Preencha o “Link do portal” nas Configurações para montar o link.':'O link será criado ao salvar.')+'</p>')+
+    '<div class="link-acts">'+(lk?'<button class="btn btn-sm" type="button" id="mCopiarLink">Copiar link</button>':'')+
+    '<button class="btn btn-sm btn-ghost" type="button" id="mNovoLink">Gerar novo link</button></div>';
+  const bc=el("mCopiarLink");if(bc)bc.onclick=()=>copiarDados(editandoLogin,bc);
+  el("mNovoLink").onclick=()=>{
+    if(!confirm("Gerar um novo link? O link atual deste cliente vai parar de funcionar."))return;
+    trocarLink=true;renderLinkModal();
+  };
+}
 function abrirModalConta(login,preKeys,nomeSugerido){
   editandoLogin=login||null;
   el("mContaTitulo").textContent=login?("Editar conta: "+login):"Nova conta";
   el("mLogin").value=login||(nomeSugerido?sugerirLogin(nomeSugerido):"");el("mLogin").disabled=!!login;
-  el("mSenha").value="";el("mErr").textContent="";el("mBusca").value="";
+  el("mErr").textContent="";el("mBusca").value="";
+  trocarLink=false;renderLinkModal();
   const sel=new Set(login?((contasCache.find(c=>c.login===login)||{}).payload||{}).keys||[]:(preKeys||[]));
   renderPick(sel,"");
   el("mBusca").oninput=()=>renderPick(sel,el("mBusca").value);
@@ -1034,15 +1109,18 @@ function renderPick(sel,q){
   });
   if(!el("mLista").children.length)el("mLista").innerHTML='<p class="sub" style="padding:.4rem 0">Nenhum cliente encontrado.</p>';
 }
-function copiarDados(login,btn){
+async function copiarDados(login,btn){
   const c=contasCache.find(x=>x.login===login);
-  const senha=(c&&c.payload&&c.payload.senhaTexto)||"";
-  const link=cfg.link||"";
-  let msg="Olá! Segue seu acesso ao portal Nordeste Prime 📱\n\n";
-  msg+="👤 Login: "+login+"\n";
-  msg+=senha?("🔑 Senha: "+senha+"\n"):"🔑 Senha: (defina uma nova senha em Editar para incluir aqui)\n";
-  if(link)msg+="\n🔗 Link para o portal:\n"+link+"\n";
-  msg+="\nLá você acompanha suas parcelas e o quanto já pagou.";
+  if(!c||!c.payload){alert("Conta não encontrada. Toque em Sincronizar agora.");return;}
+  if(migrarParaLink(c.payload)){           // conta antiga sem link: cria agora e salva
+    try{await upsertConta(login,c.payload);}catch(e){alert("Não foi possível criar o link: "+e.message);return;}
+  }
+  const link=linkDe(login,c.payload.token);
+  if(!link){alert("Preencha o “Link do portal” na aba Configurações para montar o link de acesso.");return;}
+  let msg="Olá! Segue seu link de acesso ao portal Nordeste Prime 📱\n\n";
+  msg+="🔗 "+link+"\n\n";
+  msg+="É só tocar no link, não precisa de login nem senha. Lá você acompanha suas parcelas, os pagamentos que já fez e quanto falta.\n\n";
+  msg+="⚠️ Esse link é só seu, não compartilhe.";
   const done=()=>{const t=btn.textContent;btn.textContent="Copiado ✔";setTimeout(()=>btn.textContent=t,1600);};
   if(navigator.clipboard&&navigator.clipboard.writeText){
     navigator.clipboard.writeText(msg).then(done).catch(()=>copiarFallback(msg,done));
@@ -1054,11 +1132,9 @@ function copiarFallback(txt,done){
 }
 async function salvarConta(sel){
   const login=el("mLogin").value.trim().toLowerCase().replace(/\s+/g,"");
-  const senha=el("mSenha").value;
   el("mErr").textContent="";
   if(!login){el("mErr").textContent="Informe o login.";return;}
   if(login===CONFIG.ADMIN_LOGIN||login==="__config"){el("mErr").textContent="Esse login é reservado.";return;}
-  if(!editandoLogin&&!senha){el("mErr").textContent="Informe a senha da nova conta.";return;}
   if(!sel.size){el("mErr").textContent="Associe pelo menos um cliente.";return;}
   try{
     if(!editandoLogin){
@@ -1067,11 +1143,18 @@ async function salvarConta(sel){
     }
     const antigo=editandoLogin?((contasCache.find(c=>c.login===editandoLogin)||{}).payload||{}):{};
     const p={...antigo,keys:Array.from(sel)};
-    if(senha){p.senha=await sha256(senha);p.senhaTexto=senha;}
+    if(trocarLink)delete p.token;          // "Gerar novo link": o antigo deixa de valer
+    migrarParaLink(p);
     p.extrato=montarExtrato(p.keys);
     await upsertConta(login,p);
     el("ovConta").classList.add("hide");
-    renderContas();
+    await renderContas();
+    if(!editandoLogin||trocarLink){         // conta nova ou link trocado: já abre pra copiar
+      editandoLogin=login;trocarLink=false;
+      el("mContaTitulo").textContent="Conta salva: "+login;
+      el("mLogin").value=login;el("mLogin").disabled=true;
+      el("ovConta").classList.remove("hide");renderLinkModal();
+    }
   }catch(e){el("mErr").textContent=e.message;}
 }
 
@@ -1453,6 +1536,8 @@ el("btnSair").onclick=()=>{
   const prev=cli.preview;cli={login:"",extrato:null,idx:0};
   if(prev){mostrar("viewAdmin");el("subtitle").textContent="Painel do administrador";renderContas();return;}
   pararAutoSync();
+  try{localStorage.removeItem(LINK_SALVO);}catch(e){}
+  try{if(location.search)history.replaceState(null,"",location.pathname);}catch(e){}
   el("inLogin").value=el("inSenha").value="";mostrar("viewLogin");el("subtitle").textContent="Portal do cliente";};
 /* Sincronização manual (botão do topo e "Sincronizar agora") */
 let syncManualRodando=false;
@@ -1493,6 +1578,7 @@ document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{
   el("tabContas").classList.toggle("hide",b.dataset.tab!=="contas");
   el("tabConfig").classList.toggle("hide",b.dataset.tab!=="config");
 });
+entradaPorLink();   // cliente entrando pelo link (roda depois de tudo carregado)
 </script>
 </body>
 </html>

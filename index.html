@@ -726,34 +726,45 @@ function aplicarJuros(ficha,contas,pags){
 const FORMA_HIST={dinheiro:"💵 Dinheiro",pix:"📲 Pix",deposito:"🏦 Depósito",credito:"💳 Cartão",
   desconto:"🎁 Desconto",leomaia:"📲 Pix",salsail:"📲 Pix",manual:"Outro"};
 let histVerTodos=false;
-function renderHistorico(c){
+function renderHistorico(){
   const box=el("cliHist");
-  el("cliTituloHist").textContent="Histórico de pagamentos · "+c.nome;
-  if(!Array.isArray(c.pagamentos)){
+  const cs=(cli.extrato&&cli.extrato.clientes)||[];
+  const varias=cs.length>1;
+  el("cliTituloHist").textContent="Histórico de pagamentos"+(varias?" · todas as contas":"");
+  if(!cs.length){box.innerHTML='';return;}
+  if(!cs.some(f=>Array.isArray(f.pagamentos))){
     box.innerHTML='<p class="sub">O histórico aparece na próxima atualização. Toque em “🔄 Atualizar”.</p>';return;}
-  if(!c.pagamentos.length){box.innerHTML='<p class="sub">Nenhum pagamento registrado ainda.</p>';return;}
-  // ordem do mais antigo pro mais novo para calcular o saldo depois de cada pagamento
+  // junta os pagamentos de TODAS as contas do cliente; o "restou" é calculado por conta
   const t=x=>{const d=parseDateBR(x.data);return x.anterior||!d?-8.64e15:d.getTime();};
-  const cron=c.pagamentos.map((x,i)=>({...x,i})).sort((a,b)=>(t(a)-t(b))||(a.i-b.i));
-  let acum=0;
-  cron.forEach(x=>{acum+=x.valor;x.saldoApos=Math.max(0,c.total-acum);});
-  const totalPago=cron.reduce((s,x)=>s+x.valor,0);
-  const lista=cron.slice().reverse();               // mais recente primeiro
+  const todos=[];let seq=0;
+  cs.forEach(f=>{
+    if(!Array.isArray(f.pagamentos))return;
+    const cron=f.pagamentos.map((x,i)=>({...x,i})).sort((a,b)=>(t(a)-t(b))||(a.i-b.i));
+    let acum=0;
+    cron.forEach(x=>{acum+=x.valor;todos.push({...x,saldoApos:Math.max(0,f.total-acum),conta:f.nome,origem:f.origem,seq:seq++});});
+  });
+  if(!todos.length){box.innerHTML='<p class="sub">Nenhum pagamento registrado ainda.</p>';return;}
+  const nContas=new Set(todos.map(x=>x.conta)).size;
+  const totalPago=todos.reduce((s,x)=>s+x.valor,0);
+  const lista=todos.sort((a,b)=>(t(b)-t(a))||(b.seq-a.seq));   // mais recente primeiro
   const mostra=histVerTodos?lista:lista.slice(0,5);
   let h='<div class="hist-resumo"><b>'+lista.length+'</b> pagamento'+(lista.length===1?'':'s')+
-        ' · total pago <b>'+fmtR$(totalPago)+'</b> de '+fmtR$(c.total)+'</div>';
+        (varias?' em <b>'+nContas+'</b> conta'+(nContas===1?'':'s'):'')+
+        ' · total pago <b>'+fmtR$(totalPago)+'</b></div>';
   mostra.forEach(x=>{
     const forma=x.anterior?'':('<span class="hist-forma'+(x.forma==="desconto"?' desc':'')+'">'+(FORMA_HIST[x.forma]||"💵 Pagamento")+'</span>');
-    const info=[];
-    if(x.parcela)info.push("Parcela "+x.parcela);
-    if(x.pendente)info.push('<span class="hist-pend">aguardando confirmação</span>');
-    h+='<div class="hist-it"><div><div class="hist-dt">'+(x.anterior?'Pagamentos anteriores':(x.data?x.data:'Sem data'))+'</div>'+
-       '<div class="hist-info">'+forma+info.join(' · ')+'</div></div>'+
-       '<div class="hist-val"><b>'+fmtR$(x.valor)+'</b><small>restou '+fmtR$(x.saldoApos)+'</small></div></div>';
+    let onde="";
+    if(varias)onde='<span class="badge-src '+(x.origem==="kv"?"kv":"np")+'">'+(x.origem==="kv"?"KV":"NP")+'</span> '+esc(x.conta)+(x.parcela?' · P'+x.parcela:'');
+    else if(x.parcela)onde="Parcela "+x.parcela;
+    const extra=x.pendente?' · <span class="hist-pend">aguardando confirmação</span>':'';
+    h+='<div class="hist-it"><div style="min-width:0"><div class="hist-dt">'+(x.anterior?'Pagamentos anteriores':(x.data?x.data:'Sem data'))+'</div>'+
+       (onde?'<div class="hist-info">'+onde+'</div>':'')+
+       '<div class="hist-info">'+forma+extra+'</div></div>'+
+       '<div class="hist-val"><b>'+fmtR$(x.valor)+'</b><small>restou '+fmtR$(x.saldoApos)+(varias?'<br>nesta conta':'')+'</small></div></div>';
   });
   if(lista.length>5)h+='<button class="btn btn-sm btn-ghost hist-mais" id="histMais">'+(histVerTodos?'Ver só os últimos':'Ver todos os '+lista.length+' pagamentos')+'</button>';
   box.innerHTML=h;
-  const bm=el("histMais");if(bm)bm.onclick=()=>{histVerTodos=!histVerTodos;renderHistorico(c);};
+  const bm=el("histMais");if(bm)bm.onclick=()=>{histVerTodos=!histVerTodos;renderHistorico();};
 }
 
 /* valor que aparece pro cliente (com juros) e pro admin (original) */
@@ -1102,7 +1113,7 @@ function renderCliente(){
     el("cliBarra").querySelector("i").style.width="0%";el("cliBarraLb").innerHTML="";
     el("cliParcelas").innerHTML='<p class="sub">Nenhuma informação disponível ainda. Fale com a loja.</p>';
     el("cliHist").innerHTML='';return;}
-  renderHistorico(c);
+  renderHistorico();
   el("cliTituloParcelas").textContent="Parcelas · "+c.nome;
   {const pago=Math.max(0,c.total-c.saldo);
    const pct=c.total>0?Math.min(100,Math.round(pago/c.total*100)):0;

@@ -147,6 +147,20 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
   .rg-it>span:first-child{min-width:0}
   .rg-mes-top .rg-jur{display:none}
 }
+/* histórico de pagamentos */
+.hist-resumo{font-size:.8rem;color:var(--ink-soft);margin:-.2rem 0 .6rem}
+.hist-resumo b{color:var(--ink)}
+.hist-it{display:flex;justify-content:space-between;align-items:center;gap:.7rem;padding:.6rem 0;border-bottom:1px solid var(--line-soft)}
+.hist-it:last-child{border-bottom:none}
+.hist-dt{font-weight:700;font-size:.9rem}
+.hist-info{font-size:.74rem;color:var(--ink-soft);margin-top:.15rem}
+.hist-forma{display:inline-block;font-size:.68rem;font-weight:700;padding:.1rem .45rem;border-radius:20px;background:var(--line-soft);color:var(--ink-soft);margin-right:.3rem}
+.hist-forma.desc{background:rgba(224,164,74,.15);color:var(--pending)}
+.hist-val{text-align:right;flex-shrink:0}
+.hist-val b{color:var(--paid);font-size:.95rem}
+.hist-val small{display:block;font-size:.7rem;color:var(--ink-soft);margin-top:.1rem}
+.hist-pend{color:var(--pending);font-weight:700}
+.hist-mais{width:100%;margin-top:.6rem}
 .jur-ao-lado{font-size:.76rem;font-weight:500;color:var(--ink-soft);white-space:nowrap}
 </style>
 </head>
@@ -240,6 +254,10 @@ label{display:block;font-size:.78rem;font-weight:600;margin:.7rem 0 .35rem;color
         <div class="pbar" id="cliBarra"><i style="width:0%"></i></div>
         <div class="pbar-lb" id="cliBarraLb"></div>
         <div id="cliParcelas"></div>
+      </div>
+      <div class="card" id="cliHistCard">
+        <h3 id="cliTituloHist">Histórico de pagamentos</h3>
+        <div id="cliHist"></div>
       </div>
       <div class="footer-note">Dúvidas? Fale com a gente no WhatsApp.</div>
     </div>
@@ -704,6 +722,40 @@ function aplicarJuros(ficha,contas,pags){
   ficha.taxaJuros=Number(CONFIG.TAXA_JUROS_DIA)||0;
   return ficha;
 }
+/* ---------- histórico de pagamentos (cliente) ---------- */
+const FORMA_HIST={dinheiro:"💵 Dinheiro",pix:"📲 Pix",deposito:"🏦 Depósito",credito:"💳 Cartão",
+  desconto:"🎁 Desconto",leomaia:"📲 Pix",salsail:"📲 Pix",manual:"Outro"};
+let histVerTodos=false;
+function renderHistorico(c){
+  const box=el("cliHist");
+  el("cliTituloHist").textContent="Histórico de pagamentos · "+c.nome;
+  if(!Array.isArray(c.pagamentos)){
+    box.innerHTML='<p class="sub">O histórico aparece na próxima atualização. Toque em “🔄 Atualizar”.</p>';return;}
+  if(!c.pagamentos.length){box.innerHTML='<p class="sub">Nenhum pagamento registrado ainda.</p>';return;}
+  // ordem do mais antigo pro mais novo para calcular o saldo depois de cada pagamento
+  const t=x=>{const d=parseDateBR(x.data);return x.anterior||!d?-8.64e15:d.getTime();};
+  const cron=c.pagamentos.map((x,i)=>({...x,i})).sort((a,b)=>(t(a)-t(b))||(a.i-b.i));
+  let acum=0;
+  cron.forEach(x=>{acum+=x.valor;x.saldoApos=Math.max(0,c.total-acum);});
+  const totalPago=cron.reduce((s,x)=>s+x.valor,0);
+  const lista=cron.slice().reverse();               // mais recente primeiro
+  const mostra=histVerTodos?lista:lista.slice(0,5);
+  let h='<div class="hist-resumo"><b>'+lista.length+'</b> pagamento'+(lista.length===1?'':'s')+
+        ' · total pago <b>'+fmtR$(totalPago)+'</b> de '+fmtR$(c.total)+'</div>';
+  mostra.forEach(x=>{
+    const forma=x.anterior?'':('<span class="hist-forma'+(x.forma==="desconto"?' desc':'')+'">'+(FORMA_HIST[x.forma]||"💵 Pagamento")+'</span>');
+    const info=[];
+    if(x.parcela)info.push("Parcela "+x.parcela);
+    if(x.pendente)info.push('<span class="hist-pend">aguardando confirmação</span>');
+    h+='<div class="hist-it"><div><div class="hist-dt">'+(x.anterior?'Pagamentos anteriores':(x.data?x.data:'Sem data'))+'</div>'+
+       '<div class="hist-info">'+forma+info.join(' · ')+'</div></div>'+
+       '<div class="hist-val"><b>'+fmtR$(x.valor)+'</b><small>restou '+fmtR$(x.saldoApos)+'</small></div></div>';
+  });
+  if(lista.length>5)h+='<button class="btn btn-sm btn-ghost hist-mais" id="histMais">'+(histVerTodos?'Ver só os últimos':'Ver todos os '+lista.length+' pagamentos')+'</button>';
+  box.innerHTML=h;
+  const bm=el("histMais");if(bm)bm.onclick=()=>{histVerTodos=!histVerTodos;renderHistorico(c);};
+}
+
 /* valor que aparece pro cliente (com juros) e pro admin (original) */
 const saldoCli=f=>(f.saldoAjustado!=null?f.saldoAjustado:f.saldo)||0;
 const parcCli=p=>(p.ajustado!=null?p.ajustado:p.falta)||0;
@@ -743,8 +795,13 @@ function computeFichaKV(b){
     parcs.push({n:inst.n||i+1,venc:ds,valor,falta,status:st,pagoEm});
   });
   const total=b.total||recebido;
+  const pagamentos=[];
+  insts.forEach((inst,i)=>(Array.isArray(inst.payments)?inst.payments:[]).forEach(pg=>{
+    const v=Number(pg.value)||0;if(v<=0.005)return;
+    pagamentos.push({data:isoParaBR(pg.date||""),valor:v,forma:pg.method||"",parcela:inst.n||i+1,pendente:!!pg.pending});
+  }));
   const ficha={key:b.key,nome:b.nome,origem:"kv",total,recebido:Math.min(recebido,total),
-    saldo:Math.max(0,total-recebido),parcelas:parcs,proxData,proxValor,
+    saldo:Math.max(0,total-recebido),parcelas:parcs,proxData,proxValor,pagamentos,
     semParcelas:insts.length===0};
   // juros: todos os pagamentos da venda, em ordem de data
   const contas=insts.map((inst,i)=>({n:inst.n||i+1,venc:parseDateBR(isoParaBR(inst.due)),principal:Number(inst.value)||0}));
@@ -777,7 +834,10 @@ function computeFicha(b){
     if(falta>0.005&&dt&&dt>=hoje&&!proxData){proxData=ds;proxValor=falta;}
     parcs.push({n:i+1,venc:ds,valor:valorParcela,falta,status:st,pagoEm:e.datasPagas[i]||""});
   }
-  const ficha={key:b.key,nome:b.nome,origem:"np",total:b.total,recebido,saldo,parcelas:parcs,proxData,proxValor,
+  const pagamentos=e.pagos.filter(pg=>(Number(pg.valor)||0)>0.005)
+    .map(pg=>({data:pg.data||"",valor:Number(pg.valor)||0,forma:pg.forma||"dinheiro"}));
+  if((b.recebidoOrig||0)>0.005)pagamentos.push({data:"",valor:b.recebidoOrig,anterior:true});
+  const ficha={key:b.key,nome:b.nome,origem:"np",total:b.total,recebido,saldo,parcelas:parcs,proxData,proxValor,pagamentos,
     semParcelas:parcelasTotal===0};
   // juros: recebido da planilha original (sem data) entra primeiro; depois os pagamentos pela data
   const contas=parcs.map(p=>({n:p.n,venc:parseDateBR(p.venc),principal:valorParcela}));
@@ -1035,12 +1095,14 @@ function renderCliente(){
       const atraso=!quitado&&(c.parcelas||[]).some(p=>p.status==="vencida"||p.status==="parcial-vencida");
       b.innerHTML='<span class="chip-nome"></span><span class="chip-bar'+(atraso?' late':'')+'"><i style="width:'+(quitado?100:pct)+'%"></i></span>';
       b.querySelector(".chip-nome").textContent=c.nome;
-      b.onclick=()=>{cli.idx=i;renderCliente();};chips.appendChild(b);});
+      b.onclick=()=>{cli.idx=i;histVerTodos=false;renderCliente();};chips.appendChild(b);});
   }else chips.classList.add("hide");
   const c=cs[cli.idx];
   if(!c){el("kSaldo").textContent="—";el("kProx").textContent="—";
     el("cliBarra").querySelector("i").style.width="0%";el("cliBarraLb").innerHTML="";
-    el("cliParcelas").innerHTML='<p class="sub">Nenhuma informação disponível ainda. Fale com a loja.</p>';return;}
+    el("cliParcelas").innerHTML='<p class="sub">Nenhuma informação disponível ainda. Fale com a loja.</p>';
+    el("cliHist").innerHTML='';return;}
+  renderHistorico(c);
   el("cliTituloParcelas").textContent="Parcelas · "+c.nome;
   {const pago=Math.max(0,c.total-c.saldo);
    const pct=c.total>0?Math.min(100,Math.round(pago/c.total*100)):0;
